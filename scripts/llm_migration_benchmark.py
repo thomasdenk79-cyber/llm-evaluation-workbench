@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from statistics import mean
@@ -208,11 +209,24 @@ class SystemMonitor:
 
 SIEMENS_DEFAULT_MODELS = [
     "deepseek-v4-flash",
+    "gpt-oss-120b",
     "qwen-3.6-27b",
+    "Mistral-Small-24B-Instruct-2501-FP8-dynamic",
     "ministral-3-14b-instruct-2512",
 ]
 
+# Qwen: disable thinking via chat_template_kwargs to avoid consuming all tokens in reasoning
 SIEMENS_NO_THINKING_MODELS = {"qwen-3.6-27b"}
+
+# DeepSeek Flash is a reasoning model — uses 'reasoning' field internally.
+# Needs higher token budget; content extracted via reasoning fallback if needed.
+SIEMENS_REASONING_MODELS = {"deepseek-v4-flash"}
+
+# Per-model token overrides for cloud models that need more budget
+SIEMENS_MODEL_MAX_TOKENS: Dict[str, int] = {
+    "deepseek-v4-flash": 1500,
+    "gpt-oss-120b": 600,
+}
 
 
 def load_siemens_token(args: argparse.Namespace) -> Optional[str]:
@@ -308,7 +322,13 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Path to file containing the Siemens API token.",
     )
-    parser.add_argument("--max-tokens", type=int, default=220, help="Max generated tokens.")
+    parser.add_argument(
+        "--siemens-workers",
+        type=int,
+        default=5,
+        help="Parallel workers for Siemens cloud API (default: 5 = one per model).",
+    )
+    parser.add_argument("--max-tokens", type=int, default=None, help="Max output tokens. None = no limit (model decides). Set only if you want to cap output length for speed.")
     parser.add_argument("--ctx-size", type=int, default=2048, help="Context size.")
     parser.add_argument("--threads", type=int, default=max(os.cpu_count() - 2, 1), help="CPU threads.")
     parser.add_argument("--ngl", type=int, default=0, help="llama.cpp GPU layers. 0 = CPU only (low VRAM safe).")
@@ -431,7 +451,7 @@ def ollama_generate(
             "top_p": args.top_p,
             "repeat_penalty": args.repeat_penalty,
             "num_ctx": args.ctx_size,
-            "num_predict": args.max_tokens,
+            "num_predict": args.max_tokens if args.max_tokens is not None else -1,
             "num_thread": args.threads,
         },
     }
@@ -921,7 +941,7 @@ def run_llama_server_model(
                             },
                             {"role": "user", "content": case["prompt"]},
                         ],
-                        "max_tokens": args.max_tokens,
+                        **({"max_tokens": args.max_tokens} if args.max_tokens is not None else {}),
                         "seed": args.seed,
                         "temperature": args.temp,
                         "top_p": args.top_p,
@@ -1043,12 +1063,16 @@ def siemens_generate(
     payload: Dict[str, object] = {
         "model": model,
         "messages": messages,
-        "max_tokens": args.max_tokens,
         "temperature": args.temp,
         "top_p": args.top_p,
         "stream": False,
     }
-    # Disable thinking mode for Qwen models to avoid slow/verbose output
+    # No max_tokens cap for cloud: no VRAM constraint, let model complete naturally.
+    # Reasoning models get an explicit generous limit via SIEMENS_MODEL_MAX_TOKENS.
+    explicit_max = SIEMENS_MODEL_MAX_TOKENS.get(model)
+    if explicit_max is not None:
+        payload["max_tokens"] = explicit_max
+    # Disable thinking mode for Qwen to avoid silent token consumption
     if model in SIEMENS_NO_THINKING_MODELS:
         payload["chat_template_kwargs"] = {"enable_thinking": False}
 
@@ -1177,6 +1201,16 @@ def run_siemens_case(
         output_preview="",
         error=err,
     )
+
+
+def run_siemens_model(base_url, token, model, args):
+    """Run all benchmark cases for one Siemens model serially; models run in parallel."""
+    model_results = []
+    for case in BENCH_TASKS:
+        for run_id in range(1, args.runs + 1):
+            print(f'[siemens] {model} | {case["id"]} | run {run_id}', flush=True)
+            model_results.append(run_siemens_case(base_url, token, model, case, run_id, args))
+    return model_results
 
 
 def save_results(results: List[BenchResult], output_dir: str) -> Tuple[str, str]:
@@ -1385,11 +1419,18 @@ def main() -> int:
         else:
             siemens_models = args.siemens_models or SIEMENS_DEFAULT_MODELS
             print(f"Siemens models: {', '.join(siemens_models)}")
-            for model in siemens_models:
-                for case in BENCH_TASKS:
-                    for run_id in range(1, args.runs + 1):
-                        print(f"[siemens] {model} | {case['id']} | run {run_id}")
-                        results.append(run_siemens_case(args.siemens_url, token, model, case, run_id, args))
+            workers = min(args.siemens_workers, len(siemens_models))
+            siemens_buf = []
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(run_siemens_model, args.siemens_url, token, m, args): m
+                           for m in siemens_models}
+                for future in as_completed(futures):
+                    mdl = futures[future]
+                    try:
+                        siemens_buf.extend(future.result())
+                    except Exception as exc:
+                        print(f'[siemens] {mdl} FAILED: {exc}')
+            results.extend(siemens_buf)
 
     if not results:
         print("No benchmarks executed.")

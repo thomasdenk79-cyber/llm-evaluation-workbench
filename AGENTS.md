@@ -1,8 +1,302 @@
 # AGENTS.md — Lebendes Projektgedächtnis (SSOT)
 
-> **Für jeden Agent der hier arbeitet:** Diese Datei ist das vollständige Gedächtnis des Projekts.
-> Lies sie komplett bevor du irgend etwas tust. Aktualisiere sie nach jedem Meilenstein.
-> Ohne dieses Dokument hat der nächste Agent keinen Kontext.
+> **Für jeden Agent der hier arbeitet — PFLICHTLEKTÜRE vor jeder Aktion:**
+>
+> Diese Datei ist das vollständige Gedächtnis des Projekts. Sie ersetzt jeden Onboarding-Chat.
+> **Jeder Agent MUSS sie nach jedem bedeutenden Schritt aktualisieren.**
+> Ein Agent der diese Datei nicht aktuell hält, macht seine Arbeit unbrauchbar für alle Nachfolger.
+
+---
+
+## 0. 🔴 PFLICHT: Gedächtnis-Protokoll (jeder Agent, jede Session)
+
+**Das ist keine Empfehlung — das ist Voraussetzung für das Arbeiten in diesem Repo.**
+
+### Was MUSS nach jeder Session aktualisiert werden:
+
+| Was passiert ist | Wo eintragen |
+|---|---|
+| Benchmark-Lauf abgeschlossen | Abschnitt 4 (Ergebnistabellen) |
+| Neues Modell getestet | Abschnitt 3 (Modell-Tabelle, Status auf ✅) |
+| Code geändert (Skript, Args, Format) | Abschnitt 6 (Schnellstart) + `docs/project/changelog.md` |
+| Aufgabe erledigt | Abschnitt 5 (Offene Aufgaben, Checkbox abhaken) |
+| Neuer Befund / Erkenntnis | Abschnitt 4.3 (Gesamtempfehlung) |
+| Session endet ohne Fertigstellung | Abschnitt 5.1 (Aktueller Stand) |
+
+### Wie der "Aktueller Stand"-Block aussehen muss (Abschnitt 5.1):
+```
+### Stand: YYYY-MM-DD HH:MM
+- ✅ Was wurde fertig
+- 🔄 Was läuft gerade / ist halb fertig (inkl. konkreten nächsten Befehl)
+- ❌ Was ist blockiert und warum
+- 👉 Nächster Schritt für den nächsten Agent (copy-paste-ready)
+```
+
+---
+
+## 1. Projektziel
+
+**LLM Evaluation Workbench** — Systematischer Vergleich lokaler LLMs und Siemens-Cloud-LLMs
+für Oracle→PostgreSQL-Migrationen und DE→EN-Übersetzung (Fan-Homepage).
+
+**Hardware-Kontext:**
+- Windows 11, VRAM ~8 GB (Ollama), bis ~12 GB (llama.cpp)
+- Ollama + llama.cpp + Siemens-API alle parallel verfügbar
+- llama-server bevorzugt vor llama-cli (Warmstart-Vorteil)
+
+---
+
+## 2. Umgebung — Pfade und Binaries
+
+```
+llama-server:  C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe
+llama-cli:     C:\Users\z000g9hu\llama.cpp\bin\llama.exe (Fallback)
+
+GGUF-Modelle (lokal):
+  C:\Users\z000g9hu\llama.cpp\models\gpt-oss-20b-MXFP4.gguf           (11.3 GB)
+  C:\Users\z000g9hu\llama.cpp\models\Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf (20.8 GB)
+
+Siemens LLM (Cloud — OpenAI-kompatibel):
+  Endpunkt:    https://api.siemens.com/llm/v1/chat/completions
+  Token-Datei: C:\Users\z000g9hu\OneDrive - Siemens AG\tools\myconfigfiles\code.siemens.com_api_ai_token.txt
+               (Datei hat 2 Zeilen: SIAK-... Token + URL — Skript liest automatisch nur SIAK-Zeile)
+  Env-Var:     SIEMENS_LLM_TOKEN
+  Setup:       OneDrive\tools\scripts\configure_siemens_llm.ps1
+
+Benchmark-Skript: scripts\llm_migration_benchmark.py
+Kampagnen-Wrapper: scripts\run_benchmark_campaign.ps1
+Legacy-Ergebnisse: data\benchmark_results_legacy\
+Neue Ergebnisse:   benchmark_results\  (wird bei Lauf angelegt)
+```
+
+**→ Vollständige Neuinstallationsanleitung: `docs/operations/setup-new-pc.md`**
+
+**Power-Profil-GUIDs:**
+```
+Balanced:   381b4222-f694-41f0-9685-ff5bb260df2e
+High-Perf:  8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+```
+
+---
+
+## 3. Modell-Inventar
+
+### 3a. Ollama (lokal, 632 GB Gesamt-Store)
+
+| Modell-Tag | Größe | Status | Ergebnis |
+|---|---|---|---|
+| `qwen3-coder:30b` | 18 GB | ✅ | **88.89% Qual, 28 TPS** — bester Allrounder |
+| `qwen3.6:27b-q4_K_M` | 17 GB | ✅ | **88.89% Qual, 3.5 TPS** — beste Qualität |
+| `qwen3-coder-next:q4_K_M` | 51 GB | ✅ | 88.89% Qual, 16 TPS |
+| `deepseek-coder-v2:16b` | 8.9 GB | ✅ | 84.13% Qual, **55 TPS** — schnellstes |
+| `qwen2.5-coder:32b-instruct-q4_K_M` | 19 GB | ✅ | 79.17% Qual, 3 TPS |
+| `glm-4.7-flash:q4_K_M` | 19 GB | ✅ | 77.78% Qual, 22 TPS |
+| `qwen3.6:35b-a3b-q4_K_M` | 23 GB | ✅ | 72.22% Qual, 9–29 TPS |
+| `codestral:latest` | 12 GB | ✅ | 72.22% Qual, 7.9 TPS |
+| `devstral-small-2:24b` | 15 GB | ✅ | 72.22% Qual, 5 TPS |
+| `gpt-oss:20b` | 13 GB | ✅ | 54–66% Qual, 40–84 TPS |
+| `qwen3:32b` | 20 GB | ❌ ausstehend | — |
+| `qwen3.6:27b-q8_0` | 29 GB | ❌ ausstehend | Quant-Vergleich |
+| `phi4-mini:3.8b-q4_K_M` | 2.5 GB | ❌ ausstehend | Baseline |
+| `deepseek-r1:8b` | 5.2 GB | ❌ ausstehend | Reasoning-Baseline |
+| `llama3.1:8b` | 4.9 GB | ❌ ausstehend | Baseline |
+| `llama3.3:70b` | 42 GB | ❌ ausstehend | Großes Referenzmodell |
+| `qwen3:235b-a22b-q4_K_M` | 142 GB | ❌ zu groß | RAM-limitiert |
+
+### 3b. llama.cpp (lokal, GGUF)
+
+| Modell | GGUF-Datei | Status | Bestes Ergebnis |
+|---|---|---|---|
+| `gpt-oss:20b` | `gpt-oss-20b-MXFP4.gguf` | ✅ | 84 TPS (balanced+ngl99), 66% Qual |
+| `qwen3.6:35b-a3b` | `Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf` | ✅ | 77.78% Qual (ngl99) |
+| `deepseek-coder-v2-16b` | (Ollama-Modell) | ✅ | 13 TPS, 72.22% Qual |
+| `qwen3-coder-30b` | (Ollama-Modell) | ✅ | 9 TPS, 72.22% Qual |
+
+**Key Finding llama.cpp:** `ngl` (GPU-Layer-Offload) ist kritisch. ngl=0 → 7 TPS, ngl=99 → 50+ TPS.
+Balanced-Profil schlägt High-Perf bei llama.cpp (84 vs 50 TPS bei gpt-oss).
+
+### 3c. Siemens Cloud (api.siemens.com, OpenAI-kompatibel)
+
+| Modell-ID | Kontext | Vision | Typ | Smoke-Test | Benchmark |
+|---|---|---|---|---|---|
+| `deepseek-v4-flash` | 1M | ❌ | Reasoning (intern) | ✅ OK | 🔄 läuft |
+| `gpt-oss-120b` | — | — | Standard | ✅ OK | 🔄 läuft |
+| `qwen-3.6-27b` | 262K | ✅ | Standard (Thinking OFF) | ✅ OK | 🔄 läuft |
+| `Mistral-Small-24B-Instruct-2501-FP8-dynamic` | — | — | Standard | ✅ OK | 🔄 läuft |
+| `ministral-3-14b-instruct-2512` | 256K | ✅ | Standard | ✅ OK | 🔄 läuft |
+
+**Nicht-LLM Siemens-Modelle (kein Benchmark sinnvoll):**
+`bge-m3`, `qwen3-embedding-0.6b/8b`, `qwen3-reranker-0.6b` (Embeddings/Reranking),
+`whisper-large-v3-turbo` (Speech-to-Text)
+
+**Siemens-spezifische Eigenheiten:**
+- `deepseek-v4-flash`: Reasoning-Modell, nutzt `reasoning`-Feld intern → braucht 1500 Token Budget (in `SIEMENS_MODEL_MAX_TOKENS`)
+- `qwen-3.6-27b`: Thinking-Mode wird automatisch via `chat_template_kwargs: {enable_thinking: false}` deaktiviert
+- Alle Siemens-Modelle: **kein max_tokens-Limit** gesetzt — Cloud hat kein VRAM-Problem
+- API-Calls werden **parallel** ausgeführt (ThreadPoolExecutor, `--siemens-workers 5`)
+
+---
+
+## 4. Benchmark-Ergebnisse
+
+### 4.1 Oracle→PostgreSQL Migration — Lokale Modelle (abgeschlossen 2026-07-25)
+
+Benchmark: 3 Tasks (DDL, PL/SQL, Validation), 3 Runs, Keyword-Scoring.
+
+| Modell | Backend | Konfig | Qual% | TPS | Wall-s | CPU% |
+|---|---|---|---|---|---|---|
+| qwen3-coder:30b | ollama | — | **88.89** | 28.5 | 10.8 | 40 |
+| qwen3.6:27b-q4_K_M | ollama | highperf | **88.89** | 3.5 | 46.2 | 86 |
+| qwen3-coder-next:q4_K_M | ollama | — | **88.89** | 15.9 | 30.6 | 49 |
+| deepseek-coder-v2:16b | ollama | — | 84.13 | **55.2** | 7.7 | 42 |
+| gpt-oss:20b | llama_cpp | balanced ngl99 | 66.07 | **84.1** | 2.6 | 20 |
+| gpt-oss:20b | llama_cpp | highperf ngl99 | 66.07 | 50.2 | 4.4 | 13 |
+| qwen3.6:35b-a3b | ollama | highperf | 72.22 | 28.7 | 16.1 | 66 |
+| deepseek-coder-v2-16b | llama_cpp | — | 72.22 | 13.6 | 9.4 | 60 |
+
+### 4.2 Siemens Cloud — Erster Lauf (2026-07-26, 1 Run, noch vorläufig)
+
+| Modell | Qual% | TPS | Wall-ms |
+|---|---|---|---|
+| `qwen-3.6-27b` | **88.89** | 99 | 1 346 |
+| `ministral-3-14b-instruct-2512` | 83.33 | 38 | 3 606 |
+| `deepseek-v4-flash` | 18.17* | 98 | 2 548 |
+
+*DeepSeek hatte Token-Limit-Bug (220 Tokens), ist jetzt gefixt. 3-Run-Benchmark läuft gerade.
+
+### 4.3 Übersetzung DE→EN
+
+| Modell | Backend | TPS | Qual% |
+|---|---|---|---|
+| qwen3.6:35b-a3b-q4_K_M | ollama | 36.9 | **100** |
+| qwen3.6:27b-q4_K_M | ollama | 4.0 | **100** |
+| gpt-oss:20b | llama_cpp | 33.8 | **100** |
+| gpt-oss:20b | ollama | 45.1 | 83.3 |
+
+### 4.4 Gesamtempfehlung (Stand 2026-07-26)
+
+| Zweck | Empfehlung | Grund |
+|---|---|---|
+| Beste Qualität lokal | `qwen3-coder:30b` (Ollama) | 88.89%, 28 TPS |
+| Schnell + gut lokal | `deepseek-coder-v2:16b` (Ollama) | 55 TPS, 84% |
+| Siemens Cloud | `qwen-3.6-27b` | 88.89%, 99 TPS — schneller als lokal! |
+| llama.cpp | `gpt-oss:20b` balanced+ngl99 | 84 TPS, 66% |
+
+---
+
+## 5. Aktueller Arbeitsstand
+
+### Stand: 2026-07-26 13:20
+
+- ✅ Siemens-Backend eingebaut (`--backend siemens|all`)
+- ✅ 5 Siemens-Modelle konfiguriert und Smoke-Test bestanden
+- ✅ Token-Limit für alle Backends entfernt (Cloud: kein Limit, lokal: -1 = unbegrenzt)
+- ✅ Siemens API-Calls parallel (ThreadPoolExecutor, `--siemens-workers 5`)
+- ✅ DeepSeek Flash als Reasoning-Modell erkannt + Token-Budget-Fix
+- 🔄 **Voller Siemens-Benchmark (3 Runs) läuft gerade / noch nicht abgeschlossen**
+- ❌ Vergleichstabelle lokal vs Siemens noch nicht erstellt
+
+### 👉 Nächster Schritt für neuen Agent:
+
+```powershell
+cd D:\git\llm-evaluation-workbench
+
+# 1. Siemens-Benchmark (5 Modelle parallel, 3 Runs):
+python .\scripts\llm_migration_benchmark.py --backend siemens --runs 3
+
+# 2. Danach Vergleichstabelle erstellen aus:
+#    - data\benchmark_results_legacy\highperf_ngl99\migration_llm_bench_20260725_163505.csv
+#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132136.csv
+#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132600.csv
+#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132747.csv
+#    - benchmark_results\<neuester Siemens-Lauf>.csv
+#    Ziel: docs\project\comparison_table.md
+```
+
+---
+
+## 6. Schnellstart-Befehle
+
+```powershell
+cd D:\git\llm-evaluation-workbench
+
+# Siemens (alle 5, parallel, 3 Runs — empfohlen):
+python .\scripts\llm_migration_benchmark.py --backend siemens --runs 3
+
+# Ollama (ein Modell):
+python .\scripts\llm_migration_benchmark.py --backend ollama --ollama-models "qwen3-coder:30b" --runs 3
+
+# llama.cpp (gpt-oss, ngl=99):
+python .\scripts\llm_migration_benchmark.py `
+  --backend llama_cpp `
+  --llama-server "C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe" `
+  --llama-model "gpt-oss:20b=C:\Users\z000g9hu\llama.cpp\models\gpt-oss-20b-MXFP4.gguf" `
+  --llama-ngl 99 --runs 3
+
+# Alle Backends:
+python .\scripts\llm_migration_benchmark.py --backend all --runs 1
+
+# Token manuell setzen (falls nicht automatisch gefunden):
+$env:SIEMENS_LLM_TOKEN = (Get-Content "C:\Users\z000g9hu\OneDrive - Siemens AG\tools\myconfigfiles\code.siemens.com_api_ai_token.txt" | Where-Object { $_ -match '^SIAK-' }).Trim()
+```
+
+---
+
+## 7. Bewertungsmethodik (Scoring)
+
+- **quality_score**: Keyword-Matching pro Task (OR-Gruppen möglich), Durchschnitt über alle Tasks
+- **output_tps**: Output-Tokens / Wall-time (Sekunden)
+- **wall_ms**: Gesamtlaufzeit inkl. Modell-Kaltstart (bei llama.cpp relevant)
+- **Composite Overall-Score**: 60% Qualität + 20% Speed + 10% Reliability + 10% Effizienz
+
+---
+
+## 8. 🔴 Agent-Regeln (verbindlich)
+
+**Regel 0 — Gedächtnis-Pflicht (WICHTIGSTE REGEL):**
+> Jeder Agent aktualisiert AGENTS.md nach jedem bedeutenden Schritt.
+> Abschnitt 5 ("Aktueller Arbeitsstand") MUSS am Ende jeder Session den genauen Stand zeigen.
+> Wer das nicht tut, macht seine Arbeit für alle Nachfolger unbrauchbar.
+
+1. **Keine stillen Fallbacks** — Fehler explizit loggen und im Ergebnis kennzeichnen.
+2. **Reproduzierbarkeit** — Seeds, Prompt-Sets, Parameter transparent halten.
+3. **Vergleichbarkeit** — Ollama, llama.cpp, Siemens nur mit äquivalenten Settings vergleichen.
+4. **Ergebnisstruktur stabil** — CSV/JSON-Format nicht brechen ohne Changelog-Eintrag.
+5. **Changelog führen** — `docs/project/changelog.md` bei Code- und Ergebnis-Änderungen.
+6. **Runbook aktuell** — neue Befehle/Pfade sofort in `docs/operations/runbook.md`.
+7. **Commit nach jeder Arbeitseinheit** — nie uncommitted enden.
+
+---
+
+## 9. Repository-Struktur
+
+```
+llm-evaluation-workbench/
+├── scripts/
+│   ├── llm_migration_benchmark.py   # Haupt-Engine: ollama|llama_cpp|siemens|both|all
+│   ├── run_benchmark_campaign.ps1   # Kampagnen-Wrapper mit Power-Profil-Switching
+│   └── metrics/
+│       ├── os_stats_perf_mon.py
+│       └── system_metrics_collctor.py
+├── data/
+│   └── benchmark_results_legacy/   # Historische Ergebnisse (CSV + JSON, 2026-07-25)
+├── benchmark_results/              # Neue Läufe (auto-angelegt)
+├── docs/
+│   ├── operations/
+│   │   ├── runbook.md
+│   │   └── setup-new-pc.md         # ← Neuinstallation Windows komplett
+│   ├── project/
+│   │   ├── changelog.md
+│   │   └── comparison_table.md     # ← TODO: noch zu erstellen
+│   └── engineering/documentation-guidelines.md
+├── .github/copilot-instructions.md  # Copilot-Regeln (verweist auf AGENTS.md)
+├── AGENTS.md                        # ← Diese Datei — IMMER ZUERST LESEN
+└── requirements.txt                 # psutil>=5.9
+```
+
+---
+
+*Zuletzt aktualisiert: 2026-07-26 13:20 — Siemens-Backend parallel, Benchmark läuft.*
 
 ---
 

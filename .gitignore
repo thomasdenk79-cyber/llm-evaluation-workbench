@@ -6,3 +6,6 @@ __pycache__/
 .venv/
 venv/
 benchmark_results/
+.env
+*.token
+*_token.txt

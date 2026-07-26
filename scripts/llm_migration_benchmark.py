@@ -206,15 +206,50 @@ class SystemMonitor:
         }
 
 
+SIEMENS_DEFAULT_MODELS = [
+    "deepseek-v4-flash",
+    "qwen-3.6-27b",
+    "ministral-3-14b-instruct-2512",
+]
+
+SIEMENS_NO_THINKING_MODELS = {"qwen-3.6-27b"}
+
+
+def load_siemens_token(args: argparse.Namespace) -> Optional[str]:
+    """Load Siemens API token from env var, CLI arg, or token file."""
+    token = os.environ.get("SIEMENS_LLM_TOKEN", "").strip()
+    if token:
+        return token
+    if getattr(args, "siemens_token", None):
+        return args.siemens_token.strip()
+    candidates = []
+    if getattr(args, "siemens_token_file", None):
+        candidates.append(args.siemens_token_file)
+    candidates += [
+        os.path.join(os.path.expanduser("~"), ".siemens_llm_token"),
+        os.path.join(os.path.expanduser("~"), "OneDrive - Siemens AG",
+                     "tools", "myconfigfiles", "code.siemens.com_api_ai_token.txt"),
+    ]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                t = fh.read().strip()
+                if t:
+                    return t
+        except OSError:
+            continue
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Small LLM benchmark for Oracle->PostgreSQL migration tasks."
     )
     parser.add_argument(
         "--backend",
-        choices=["ollama", "llama_cpp", "both"],
+        choices=["ollama", "llama_cpp", "siemens", "both", "all"],
         default="both",
-        help="Backend to benchmark.",
+        help="Backend to benchmark. 'both'=ollama+llama_cpp, 'all'=ollama+llama_cpp+siemens.",
     )
     parser.add_argument(
         "--ollama-url",
@@ -246,6 +281,28 @@ def parse_args() -> argparse.Namespace:
         help="llama.cpp model in format NAME=PATH (repeatable).",
     )
     parser.add_argument("--runs", type=int, default=1, help="Runs per case.")
+    parser.add_argument(
+        "--siemens-url",
+        default="https://api.siemens.com/llm/v1",
+        help="Siemens LLM API base URL (OpenAI-compatible).",
+    )
+    parser.add_argument(
+        "--siemens-model",
+        action="append",
+        dest="siemens_models",
+        default=[],
+        help="Siemens model name (repeatable). Default: all three Siemens models.",
+    )
+    parser.add_argument(
+        "--siemens-token",
+        default="",
+        help="Siemens API token. Prefer env var SIEMENS_LLM_TOKEN instead.",
+    )
+    parser.add_argument(
+        "--siemens-token-file",
+        default="",
+        help="Path to file containing the Siemens API token.",
+    )
     parser.add_argument("--max-tokens", type=int, default=220, help="Max generated tokens.")
     parser.add_argument("--ctx-size", type=int, default=2048, help="Context size.")
     parser.add_argument("--threads", type=int, default=max(os.cpu_count() - 2, 1), help="CPU threads.")
@@ -963,6 +1020,160 @@ def run_llama_server_model(
     return results
 
 
+def siemens_generate(
+    base_url: str,
+    token: str,
+    model: str,
+    prompt: str,
+    args: argparse.Namespace,
+) -> Dict[str, object]:
+    """Call Siemens OpenAI-compatible chat completions endpoint."""
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a PostgreSQL migration assistant. Return SQL only, no markdown, no explanations.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    payload: Dict[str, object] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": args.max_tokens,
+        "temperature": args.temp,
+        "top_p": args.top_p,
+        "stream": False,
+    }
+    # Disable thinking mode for Qwen models to avoid slow/verbose output
+    if model in SIEMENS_NO_THINKING_MODELS:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+    url = base_url.rstrip("/") + "/chat/completions"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+    attempts = 3
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=args.timeout_sec) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code in (429, 502, 503) and attempt < attempts:
+                time.sleep(3 * attempt)
+                continue
+            raise
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(1.5)
+                continue
+            raise
+    raise RuntimeError(f"Siemens API failed after retries: {last_error}")
+
+
+def run_siemens_case(
+    base_url: str,
+    token: str,
+    model: str,
+    case: Dict[str, object],
+    run_id: int,
+    args: argparse.Namespace,
+) -> BenchResult:
+    start = time.perf_counter()
+    cpu_start = time.process_time()
+    monitor = SystemMonitor()
+    monitor.start()
+    try:
+        parsed = siemens_generate(base_url, token, model, case["prompt"], args)
+        wall_s = time.perf_counter() - start
+        monitor.stop()
+        m = monitor.stats()
+
+        text = (
+            parsed.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        cleaned_text = clean_model_output(text)
+        quality, hits = score_output(text, case["required_keywords"])
+        usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
+        prompt_tokens = usage.get("prompt_tokens")
+        output_tokens = usage.get("completion_tokens")
+        output_tps = float(output_tokens) / wall_s if isinstance(output_tokens, (int, float)) and wall_s > 0 else None
+
+        return BenchResult(
+            backend="siemens",
+            model=model,
+            case_id=case["id"],
+            case_title=case["title"],
+            run=run_id,
+            wall_ms=wall_s * 1000.0,
+            prompt_tokens=int(prompt_tokens) if isinstance(prompt_tokens, (int, float)) else None,
+            output_tokens=int(output_tokens) if isinstance(output_tokens, (int, float)) else None,
+            output_tps=output_tps,
+            quality_score=quality,
+            keyword_hits=hits,
+            keyword_total=len(case["required_keywords"]),
+            avg_cpu_pct=m["avg_cpu_pct"],
+            max_cpu_pct=m["max_cpu_pct"],
+            avg_mem_pct=m["avg_mem_pct"],
+            max_mem_pct=m["max_mem_pct"],
+            avg_gpu_pct=None,       # cloud-hosted, kein lokales GPU
+            max_gpu_pct=None,
+            avg_vram_used_mb=None,
+            max_vram_used_mb=None,
+            cpu_time_sec=time.process_time() - cpu_start,
+            output_preview=cleaned_text[:220].replace("\n", "\\n"),
+            error="",
+        )
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            pass
+        err = f"Siemens HTTP {exc.code}: {exc.reason} — {body}"
+    except urllib.error.URLError as exc:
+        err = f"Siemens connection failed: {exc}"
+    except Exception as exc:
+        err = f"Siemens error: {exc}"
+
+    monitor.stop()
+    m = monitor.stats()
+    return BenchResult(
+        backend="siemens",
+        model=model,
+        case_id=case["id"],
+        case_title=case["title"],
+        run=run_id,
+        wall_ms=(time.perf_counter() - start) * 1000.0,
+        prompt_tokens=None,
+        output_tokens=None,
+        output_tps=None,
+        quality_score=0.0,
+        keyword_hits=0,
+        keyword_total=len(case["required_keywords"]),
+        avg_cpu_pct=m["avg_cpu_pct"],
+        max_cpu_pct=m["max_cpu_pct"],
+        avg_mem_pct=m["avg_mem_pct"],
+        max_mem_pct=m["max_mem_pct"],
+        avg_gpu_pct=None,
+        max_gpu_pct=None,
+        avg_vram_used_mb=None,
+        max_vram_used_mb=None,
+        cpu_time_sec=time.process_time() - cpu_start,
+        output_preview="",
+        error=err,
+    )
+
+
 def save_results(results: List[BenchResult], output_dir: str) -> Tuple[str, str]:
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1119,7 +1330,7 @@ def main() -> int:
 
     results: List[BenchResult] = []
 
-    if args.backend in ("ollama", "both"):
+    if args.backend in ("ollama", "both", "all"):
         ollama_models = args.ollama_models or default_ollama_models()
         if not ollama_models:
             print("No matching Ollama models found for qwen3.6 27/35 q4 and gpt-oss.")
@@ -1131,7 +1342,7 @@ def main() -> int:
                         print(f"[ollama] {model} | {case['id']} | run {run_id}")
                         results.append(run_ollama_case(model, case, run_id, args))
 
-    if args.backend in ("llama_cpp", "both"):
+    if args.backend in ("llama_cpp", "both", "all"):
         try:
             llama_models = parse_llama_model_specs(args.llama_models)
         except ValueError as exc:
@@ -1154,6 +1365,24 @@ def main() -> int:
                         for run_id in range(1, args.runs + 1):
                             print(f"[llama_cpp/cli] {model_name} | {case['id']} | run {run_id}")
                             results.append(run_llama_cpp_case(model_name, model_path, case, run_id, args))
+
+    if args.backend in ("siemens", "all"):
+        token = load_siemens_token(args)
+        if not token:
+            print(
+                "ERROR: Siemens API token not found. Set env var SIEMENS_LLM_TOKEN, "
+                "use --siemens-token, or --siemens-token-file."
+            )
+            if args.backend == "siemens":
+                return 2
+        else:
+            siemens_models = args.siemens_models or SIEMENS_DEFAULT_MODELS
+            print(f"Siemens models: {', '.join(siemens_models)}")
+            for model in siemens_models:
+                for case in BENCH_TASKS:
+                    for run_id in range(1, args.runs + 1):
+                        print(f"[siemens] {model} | {case['id']} | run {run_id}")
+                        results.append(run_siemens_case(args.siemens_url, token, model, case, run_id, args))
 
     if not results:
         print("No benchmarks executed.")

@@ -6,7 +6,35 @@
 
 ---
 
-## 0. Voraussetzungen
+## 0. Architektur: Wie alles zusammenhängt
+
+```
+OneDrive\GIT\          ← alle Repos + globale Agent-Regeln
+    │
+    ├── AGENTS.md      ← MASTER: Eine Datei für ALLE AI-Agents
+    ├── llm-evaluation-workbench\
+    ├── throne-liberty-eu-kalender\
+    └── ...
+
+C:\GIT\                ← Junction (mklink /J) → OneDrive\GIT\
+    └── AGENTS.md      ← selbe Datei, automatisch via Junction
+
+Agent-spezifische Symlinks (erstellt durch Autoinstaller):
+    %USERPROFILE%\CLAUDE.md                    → C:\GIT\AGENTS.md  (Claude Code)
+    %USERPROFILE%\.codex\instructions.md       → C:\GIT\AGENTS.md  (OpenAI Codex CLI)
+    %USERPROFILE%\.cursorrules                 → C:\GIT\AGENTS.md  (Cursor)
+    %APPDATA%\Code\User\prompts\global-agent-rules.instructions.md  → C:\GIT\AGENTS.md  (Copilot)
+
+Env-Vars (User-Scope, persistent):
+    AI_AGENT_INSTRUCTIONS = C:\GIT\AGENTS.md  (universeller Zeiger)
+    CODEX_SYSTEM_PROMPT   = <Inhalt>           (für Agents ohne Datei-Lesen)
+```
+
+**Nur `C:\GIT\AGENTS.md` pflegen — alle Agents sehen es sofort.**
+
+---
+
+## 0b. Voraussetzungen
 
 | Was | Warum | Installieren via |
 |---|---|---|
@@ -16,12 +44,14 @@
 | VS Code | Copilot-Agent, IDE | `winget install Microsoft.VisualStudioCode` |
 | NVIDIA-Treiber | GPU-Offload für llama.cpp | [nvidia.com/drivers](https://www.nvidia.com/drivers) |
 
-**Schnellinstall via Autoinstaller (empfohlen):**
+**Schnellinstall via Autoinstaller (empfohlen — läuft als Admin, macht alles automatisch):**
 ```
 C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\TommysWin11Autoinstaller.bat
 ```
-Kategorie **"Development"** und **"AI Tools"** auswählen — das installiert Git, VS Code und führt
-`configure_siemens_llm.ps1` automatisch aus.
+Kategorien wählen:
+- **"System"** → erstellt `C:\GIT` Junction + setzt Env-Vars
+- **"Development"** → VS Code Extensions, Copilot, Siemens LLM, `restore_agent_rules.ps1` (setzt alle Agent-Symlinks)
+- **"AI Tools"** → Siemens LLM konfigurieren
 
 ---
 

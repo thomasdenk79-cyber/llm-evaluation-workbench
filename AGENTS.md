@@ -67,6 +67,8 @@ Benchmark-Skript: scripts\llm_migration_benchmark.py
 Kampagnen-Wrapper: scripts\run_benchmark_campaign.ps1
 Legacy-Ergebnisse: data\benchmark_results_legacy\
 Neue Ergebnisse:   benchmark_results\  (wird bei Lauf angelegt)
+Docs-Test:         python standards\scripts\test_docs.py  (aus Standards-Submodule)
+MkDocs-Build:      python -m mkdocs build --strict
 ```
 
 **→ Vollständige Neuinstallationsanleitung: `docs/operations/setup-new-pc.md`**

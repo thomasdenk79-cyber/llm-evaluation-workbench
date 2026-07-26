@@ -222,11 +222,8 @@ SIEMENS_NO_THINKING_MODELS = {"qwen-3.6-27b"}
 # Needs higher token budget; content extracted via reasoning fallback if needed.
 SIEMENS_REASONING_MODELS = {"deepseek-v4-flash"}
 
-# Per-model token overrides for cloud models that need more budget
-SIEMENS_MODEL_MAX_TOKENS: Dict[str, int] = {
-    "deepseek-v4-flash": 1500,
-    "gpt-oss-120b": 600,
-}
+# No per-model token limits — cloud has no VRAM constraint, let models complete naturally.
+SIEMENS_MODEL_MAX_TOKENS: Dict[str, int] = {}
 
 
 def load_siemens_token(args: argparse.Namespace) -> Optional[str]:

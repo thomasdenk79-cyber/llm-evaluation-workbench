@@ -1,17 +1,9 @@
 # AGENTS.md — Lebendes Projektgedächtnis (SSOT)
 
-> ## 🚨 SOFORTAKTION — BEVOR DU IRGENDETWAS FRAGST:
->
-> **Springe jetzt zu Abschnitt 5.1 ("Aktueller Stand") und führe den dort angegebenen
-> "Nächster Schritt"-Befehl aus. Frage den Nutzer NICHT was zu tun ist — der Stand steht bereits drin.**
->
-> Danach diese Datei vollständig lesen (dauert ~2 Minuten, spart Stunden Rückfragen).
-
----
-
 > **Für jeden Agent der hier arbeitet — PFLICHTLEKTÜRE vor jeder Aktion:**
 >
 > Diese Datei ist das vollständige Gedächtnis des Projekts. Sie ersetzt jeden Onboarding-Chat.
+> Lies sie vollständig → verstehe den Aktuellen Stand → handle. Keine Rückfragen vorher.
 > **Jeder Agent MUSS sie nach jedem bedeutenden Schritt aktualisieren.**
 > Ein Agent der diese Datei nicht aktuell hält, macht seine Arbeit unbrauchbar für alle Nachfolger.
 
@@ -165,15 +157,20 @@ Benchmark: 3 Tasks (DDL, PL/SQL, Validation), 3 Runs, Keyword-Scoring.
 | qwen3.6:35b-a3b | ollama | highperf | 72.22 | 28.7 | 16.1 | 66 |
 | deepseek-coder-v2-16b | llama_cpp | — | 72.22 | 13.6 | 9.4 | 60 |
 
-### 4.2 Siemens Cloud — Erster Lauf (2026-07-26, 1 Run, noch vorläufig)
+### 4.2 Siemens Cloud — Final (2026-07-26, 3 Runs, ohne Token-Limits)
 
-| Modell | Qual% | TPS | Wall-ms |
-|---|---|---|---|
-| `qwen-3.6-27b` | **88.89** | 99 | 1 346 |
-| `ministral-3-14b-instruct-2512` | 83.33 | 38 | 3 606 |
-| `deepseek-v4-flash` | 18.17* | 98 | 2 548 |
+Datei: `benchmark_results/migration_llm_bench_20260726_142651.csv`
 
-*DeepSeek hatte Token-Limit-Bug (220 Tokens), ist jetzt gefixt. 3-Run-Benchmark läuft gerade.
+| Modell | Overall | Qual% | TPS | Wall-ms | Rel% |
+|---|---|---|---|---|---|
+| `gpt-oss-120b` | 84.93 | 88.89 | **163** | 5 459 | 100 |
+| `deepseek-v4-flash` | 83.36 | 92.59 | 115 | 21 906 | 100 |
+| `qwen-3.6-27b` | 79.67 | **92.86** | 93 | **3 066** | 100 |
+| `ministral-3-14b-instruct-2512` | 75.96 | **95.83** | 36 | 6 521 | 88.9 |
+| `Mistral-Small-24B-Instruct-2501-FP8-dynamic` | 69.21 | 83.33 | 24 | 8 321 | 100 |
+
+> **⚠️ Token-Limit-Bug:** `deepseek-v4-flash` hatte mit Limit 220 Tokens nur 18% Qualität.
+> Nach Entfernung aller Token-Limits (`SIEMENS_MODEL_MAX_TOKENS = {}`): **92.59%**.
 
 ### 4.3 Übersetzung DE→EN
 
@@ -188,40 +185,37 @@ Benchmark: 3 Tasks (DDL, PL/SQL, Validation), 3 Runs, Keyword-Scoring.
 
 | Zweck | Empfehlung | Grund |
 |---|---|---|
-| Beste Qualität lokal | `qwen3-coder:30b` (Ollama) | 88.89%, 28 TPS |
-| Schnell + gut lokal | `deepseek-coder-v2:16b` (Ollama) | 55 TPS, 84% |
-| Siemens Cloud | `qwen-3.6-27b` | 88.89%, 99 TPS — schneller als lokal! |
+| Beste Qualität gesamt | `ministral-3-14b-instruct-2512` (Cloud) | 95.83% — Spitzenreiter |
+| Beste Balance Cloud | `qwen-3.6-27b` (Cloud) | 92.86%, 93 TPS, nur 3s Wall |
+| Schnellstes Modell | `gpt-oss-120b` (Cloud) | 163 TPS, 88.89% |
+| Bester lokaler Allrounder | `qwen3-coder:30b` (Ollama) | 88.89%, 28 TPS |
+| Schnellstes lokal | `deepseek-coder-v2:16b` (Ollama) | 55 TPS, 84% |
 | llama.cpp | `gpt-oss:20b` balanced+ngl99 | 84 TPS, 66% |
 
 ---
 
 ## 5. Aktueller Arbeitsstand
 
-### Stand: 2026-07-26 13:20
+### Stand: 2026-07-26 14:27
 
-- ✅ Siemens-Backend eingebaut (`--backend siemens|all`)
-- ✅ 5 Siemens-Modelle konfiguriert und Smoke-Test bestanden
-- ✅ Token-Limit für alle Backends entfernt (Cloud: kein Limit, lokal: -1 = unbegrenzt)
-- ✅ Siemens API-Calls parallel (ThreadPoolExecutor, `--siemens-workers 5`)
-- ✅ DeepSeek Flash als Reasoning-Modell erkannt + Token-Budget-Fix
-- 🔄 **Voller Siemens-Benchmark (3 Runs) läuft gerade / noch nicht abgeschlossen**
-- ❌ Vergleichstabelle lokal vs Siemens noch nicht erstellt
+- ✅ Siemens-Backend mit 5 Modellen eingebaut
+- ✅ Token-Limits komplett entfernt (`SIEMENS_MODEL_MAX_TOKENS = {}`) — war der Kern-Bug
+- ✅ Voller Siemens-Benchmark abgeschlossen: 5 Modelle × 3 Runs (`migration_llm_bench_20260726_142651`)
+- ✅ Vergleichstabelle erstellt: `docs/project/comparison_table.md`
+- ✅ Changelog aktualisiert
+- ❌ `ministral-3-14b-instruct-2512` hatte 1× 502 Bad Gateway bei validation_query run 3 — Retry sinnvoll
 
 ### 👉 Nächster Schritt für neuen Agent:
 
 ```powershell
 cd D:\git\llm-evaluation-workbench
 
-# 1. Siemens-Benchmark (5 Modelle parallel, 3 Runs):
-python .\scripts\llm_migration_benchmark.py --backend siemens --runs 3
+# Optional: ministral nochmal solo wegen 502-Fehler:
+python .\scripts\llm_migration_benchmark.py --backend siemens --siemens-model ministral-3-14b-instruct-2512 --runs 3
 
-# 2. Danach Vergleichstabelle erstellen aus:
-#    - data\benchmark_results_legacy\highperf_ngl99\migration_llm_bench_20260725_163505.csv
-#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132136.csv
-#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132600.csv
-#    - data\benchmark_results_legacy\migration_llm_bench_20260725_132747.csv
-#    - benchmark_results\<neuester Siemens-Lauf>.csv
-#    Ziel: docs\project\comparison_table.md
+# Dann: fehlende lokale Modelle testen (Priorität 1 aus Abschnitt 5):
+python .\scripts\llm_migration_benchmark.py --backend ollama --ollama-models "qwen3:32b" --runs 3
+python .\scripts\llm_migration_benchmark.py --backend ollama --ollama-models "phi4-mini:3.8b-q4_K_M" --runs 3
 ```
 
 ---
@@ -307,7 +301,7 @@ llm-evaluation-workbench/
 
 ---
 
-*Zuletzt aktualisiert: 2026-07-26 13:20 — Siemens-Backend parallel, Benchmark läuft.*
+*Zuletzt aktualisiert: 2026-07-26 14:27 — Siemens-Benchmark abgeschlossen, Token-Limits entfernt, Vergleichstabelle erstellt.*
 
 ---
 

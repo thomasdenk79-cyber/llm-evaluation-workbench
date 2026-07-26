@@ -40,6 +40,22 @@
 - Balanced-Profil übertrifft High-Perf bei llama.cpp (84 vs 50 TPS bei gpt-oss)
 - Alle qwen3.6-Modelle erreichen 100% bei Übersetzung
 
+## 2026-07-26 — Siemens Cloud Benchmark (abgeschlossen)
+
+### Durchgeführte Läufe
+- `migration_llm_bench_20260726_142651` — 5 Siemens-Modelle, 3 Runs, **ohne Token-Limits**
+
+### Wichtigste Erkenntnisse
+- Token-Limit-Bug bei `deepseek-v4-flash` behoben: 18% → **92.59% Qualität**
+- `ministral-3-14b-instruct-2512` höchste Qualität überhaupt: **95.83%**
+- `gpt-oss-120b` schnellstes Modell gesamt: **163 TPS**
+- `qwen-3.6-27b` beste Balance: 92.86% Qualität bei 93 TPS und nur 3s Wall-time
+- `SIEMENS_MODEL_MAX_TOKENS` vollständig entfernt (war falsch dokumentiert als bereits gefixt)
+- Vergleichstabelle erstellt: `docs/project/comparison_table.md`
+
+### Code-Änderungen
+- `scripts/llm_migration_benchmark.py`: `SIEMENS_MODEL_MAX_TOKENS` auf leeres Dict gesetzt (kein Limit für Cloud-Modelle)
+
 ## 2026-07-26 — Repository-Initialisierung
 
 - Neues Repository `D:\git\llm-evaluation-workbench` angelegt.

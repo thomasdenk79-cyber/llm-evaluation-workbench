@@ -1,0 +1,1685 @@
+
+<!doctype html>
+<html lang="de" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Benchmark-Workbench fuer lokale und Siemens-Cloud-LLMs — Oracle-zu-PostgreSQL-Migration">
+      
+      
+        <meta name="author" content="Thomas Denk">
+      
+      
+      
+        <link rel="prev" href="../../project/changelog/">
+      
+      
+        <link rel="next" href="../runbook/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Setup (neuer PC) - LLM Evaluation Workbench</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="cyan">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#setup-anleitung-neue-windows-installation-llm-workbench" class="md-skip">
+          Zum Inhalt
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Kopfzeile">
+    <a href="../.." title="LLM Evaluation Workbench" class="md-header__button md-logo" aria-label="LLM Evaluation Workbench" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            LLM Evaluation Workbench
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Setup (neuer PC)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="cyan"  aria-label="Helles Design"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Helles Design" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="cyan"  aria-label="Dunkles Design"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Dunkles Design" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Suche" placeholder="Suche" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Suche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Zurücksetzen" aria-label="Zurücksetzen" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Suche wird initialisiert
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/thomasdenk79-cyber/llm-evaluation-workbench" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    thomasdenk79-cyber/llm-evaluation-workbench
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="LLM Evaluation Workbench" class="md-nav__button md-logo" aria-label="LLM Evaluation Workbench" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    LLM Evaluation Workbench
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/thomasdenk79-cyber/llm-evaluation-workbench" title="Zum Repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    thomasdenk79-cyber/llm-evaluation-workbench
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Konzepte
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Konzepte
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ki-team-konzept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    KI-Agenten als Team
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark-Ergebnisse
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entwickler
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Entwickler
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup (neuer PC)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup (neuer PC)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-architektur-wie-alles-zusammenhangt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Architektur: Wie alles zusammenhängt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0b-voraussetzungen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0b. Voraussetzungen
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-ollama-lokale-llms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Ollama (lokale LLMs)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Ollama (lokale LLMs)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-installieren" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. Installieren
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-modelle-herunterladen-benchmark-relevante-nach-prioritat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Modelle herunterladen (Benchmark-relevante, nach Priorität)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1c-ollama-konfiguration-prufen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1c. Ollama-Konfiguration prüfen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-llamacpp-lokale-llms-gpu-optimiert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. llama.cpp (lokale LLMs, GPU-optimiert)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. llama.cpp (lokale LLMs, GPU-optimiert)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#2a-binaries-wiederherstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2a. Binaries wiederherstellen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2b-gguf-modelle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2b. GGUF-Modelle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2c-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2c. Test
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-siemens-llm-cloud-uber-apisiemenscom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Siemens LLM (Cloud, über api.siemens.com)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Siemens LLM (Cloud, über api.siemens.com)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-token-erstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. Token erstellen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-token-speichern-one-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b. Token speichern (ONE-TIME)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3c-konfiguration-einrichten-einzeiler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3c. Konfiguration einrichten (Einzeiler)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3d-verifizieren" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3d. Verifizieren
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-benchmark-workbench-einrichten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Benchmark-Workbench einrichten
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Benchmark-Workbench einrichten">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4b-schnelltest-nach-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4b. Schnelltest nach Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-windows-power-profile-fur-benchmark-genauigkeit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Windows Power-Profile (für Benchmark-Genauigkeit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-vs-code-chat-verlauf-wiederherstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. VS Code Chat-Verlauf wiederherstellen
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-datei-uberblick-was-wo-liegt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Datei-Überblick: Was wo liegt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-autoinstaller-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Autoinstaller-Integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-checkliste-neuinstallation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Checkliste Neuinstallation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../engineering/documentation-guidelines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Doku-Richtlinien
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../engineering/ki-agenten-konzept/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    KI-Konzept (Detail)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Inhaltsverzeichnis">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Inhaltsverzeichnis
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-architektur-wie-alles-zusammenhangt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Architektur: Wie alles zusammenhängt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0b-voraussetzungen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0b. Voraussetzungen
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-ollama-lokale-llms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Ollama (lokale LLMs)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Ollama (lokale LLMs)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-installieren" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. Installieren
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-modelle-herunterladen-benchmark-relevante-nach-prioritat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Modelle herunterladen (Benchmark-relevante, nach Priorität)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1c-ollama-konfiguration-prufen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1c. Ollama-Konfiguration prüfen
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-llamacpp-lokale-llms-gpu-optimiert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. llama.cpp (lokale LLMs, GPU-optimiert)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. llama.cpp (lokale LLMs, GPU-optimiert)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#2a-binaries-wiederherstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2a. Binaries wiederherstellen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2b-gguf-modelle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2b. GGUF-Modelle
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2c-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2c. Test
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-siemens-llm-cloud-uber-apisiemenscom" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Siemens LLM (Cloud, über api.siemens.com)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Siemens LLM (Cloud, über api.siemens.com)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-token-erstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. Token erstellen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-token-speichern-one-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b. Token speichern (ONE-TIME)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3c-konfiguration-einrichten-einzeiler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3c. Konfiguration einrichten (Einzeiler)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3d-verifizieren" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3d. Verifizieren
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-benchmark-workbench-einrichten" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Benchmark-Workbench einrichten
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Benchmark-Workbench einrichten">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#4b-schnelltest-nach-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4b. Schnelltest nach Setup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-windows-power-profile-fur-benchmark-genauigkeit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Windows Power-Profile (für Benchmark-Genauigkeit)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-vs-code-chat-verlauf-wiederherstellen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. VS Code Chat-Verlauf wiederherstellen
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-datei-uberblick-was-wo-liegt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Datei-Überblick: Was wo liegt
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-autoinstaller-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Autoinstaller-Integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-checkliste-neuinstallation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Checkliste Neuinstallation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/thomasdenk79-cyber/llm-evaluation-workbench/edit/main/docs/operations/setup-new-pc.md" title="Seite editieren" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="setup-anleitung-neue-windows-installation-llm-workbench">Setup-Anleitung: Neue Windows-Installation (LLM Workbench)<a class="headerlink" href="#setup-anleitung-neue-windows-installation-llm-workbench" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Dieses Dokument erklärt Schritt für Schritt wie die vollständige LLM-Arbeitsumgebung
+auf einem neuen oder frisch installierten Windows-PC eingerichtet wird.
+<strong>Alles liegt in OneDrive gesichert</strong> — nichts muss neu konfiguriert werden, nur wiederhergestellt.</p>
+</blockquote>
+<hr />
+<h2 id="0-architektur-wie-alles-zusammenhangt">0. Architektur: Wie alles zusammenhängt<a class="headerlink" href="#0-architektur-wie-alles-zusammenhangt" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>OneDrive\GIT\          ← alle Repos + globale Agent-Regeln
+    │
+    ├── AGENTS.md      ← MASTER: Eine Datei für ALLE AI-Agents
+    ├── llm-evaluation-workbench\
+    ├── throne-liberty-eu-kalender\
+    └── ...
+
+C:\GIT\                ← Junction (mklink /J) → OneDrive\GIT\
+    └── AGENTS.md      ← selbe Datei, automatisch via Junction
+
+Agent-spezifische Symlinks (erstellt durch Autoinstaller):
+    %USERPROFILE%\CLAUDE.md                    → C:\GIT\AGENTS.md  (Claude Code)
+    %USERPROFILE%\.codex\instructions.md       → C:\GIT\AGENTS.md  (OpenAI Codex CLI)
+    %USERPROFILE%\.cursorrules                 → C:\GIT\AGENTS.md  (Cursor)
+    %APPDATA%\Code\User\prompts\global-agent-rules.instructions.md  → C:\GIT\AGENTS.md  (Copilot)
+
+Env-Vars (User-Scope, persistent):
+    AI_AGENT_INSTRUCTIONS = C:\GIT\AGENTS.md  (universeller Zeiger)
+    CODEX_SYSTEM_PROMPT   = &lt;Inhalt&gt;           (für Agents ohne Datei-Lesen)
+</code></pre></div>
+<p><strong>Nur <code>C:\GIT\AGENTS.md</code> pflegen — alle Agents sehen es sofort.</strong></p>
+<hr />
+<h2 id="0b-voraussetzungen">0b. Voraussetzungen<a class="headerlink" href="#0b-voraussetzungen" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Was</th>
+<th>Warum</th>
+<th>Installieren via</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows 11</td>
+<td>Plattform</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Python 3.11+</td>
+<td>Benchmark-Skript</td>
+<td><code>winget install Python.Python.3.13</code></td>
+</tr>
+<tr>
+<td>Git</td>
+<td>Repo-Verwaltung</td>
+<td><code>winget install Git.Git</code></td>
+</tr>
+<tr>
+<td>VS Code</td>
+<td>Copilot-Agent, IDE</td>
+<td><code>winget install Microsoft.VisualStudioCode</code></td>
+</tr>
+<tr>
+<td>NVIDIA-Treiber</td>
+<td>GPU-Offload für llama.cpp</td>
+<td><a href="https://www.nvidia.com/drivers">nvidia.com/drivers</a></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Schnellinstall via Autoinstaller (empfohlen — läuft als Admin, macht alles automatisch):</strong>
+<div class="highlight"><pre><span></span><code>C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\TommysWin11Autoinstaller.bat
+</code></pre></div>
+Kategorien wählen:
+- <strong>"System"</strong> → erstellt <code>C:\GIT</code> Junction + setzt Env-Vars
+- <strong>"Development"</strong> → VS Code Extensions, Copilot, Siemens LLM, <code>restore_agent_rules.ps1</code> (setzt alle Agent-Symlinks)
+- <strong>"AI Tools"</strong> → Siemens LLM konfigurieren</p>
+<hr />
+<h2 id="1-ollama-lokale-llms">1. Ollama (lokale LLMs)<a class="headerlink" href="#1-ollama-lokale-llms" title="Permanent link">&para;</a></h2>
+<h3 id="1a-installieren">1a. Installieren<a class="headerlink" href="#1a-installieren" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">winget</span> <span class="n">install</span> <span class="n">Ollama</span><span class="p">.</span><span class="n">Ollama</span>
+<span class="c"># oder direkt: https://ollama.com/download</span>
+</code></pre></div>
+<p>Ollama läuft als Windows-Dienst auf Port <code>11434</code>. Nach Installation automatisch gestartet.</p>
+<p><strong>Installationspfad:</strong> <code>C:\Users\z000g9hu\AppData\Local\Programs\Ollama\ollama.exe</code>
+<strong>Modell-Store:</strong> <code>C:\Users\z000g9hu\.ollama\models\</code> (aktuell ~632 GB!)</p>
+<blockquote>
+<p>⚠️ <strong>Hinweis:</strong> Der Modell-Store ist NICHT in OneDrive — Modelle müssen nach Neuinstallation
+neu heruntergeladen werden. Bei einem PC-Wechsel ggf. Ordner extern sichern.</p>
+</blockquote>
+<h3 id="1b-modelle-herunterladen-benchmark-relevante-nach-prioritat">1b. Modelle herunterladen (Benchmark-relevante, nach Priorität)<a class="headerlink" href="#1b-modelle-herunterladen-benchmark-relevante-nach-prioritat" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c"># Haupt-Benchmark-Modelle:</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3</span><span class="p">.</span><span class="n">6</span><span class="p">:</span><span class="n">27b-q4_K_M</span>        <span class="c"># 17 GB — beste Migration-Qualität</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3</span><span class="p">.</span><span class="n">6</span><span class="p">:</span><span class="n">35b-a3b-q4_K_M</span>    <span class="c"># 23 GB — beste Übersetzungsqualität</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">gpt-oss</span><span class="p">:</span><span class="n">20b</span>               <span class="c"># 13 GB — schnellstes Modell</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3-coder</span><span class="p">:</span><span class="n">30b</span>           <span class="c"># 18 GB — bester Allrounder (empfohlen!)</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">deepseek-coder-v2</span><span class="p">:</span><span class="n">16b</span>     <span class="c"># 8.9 GB — bestes Speed/Qualitäts-Verhältnis</span>
+
+<span class="c"># Erweiterte Modelle (alle getesteten):</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">codestral</span><span class="p">:</span><span class="n">latest</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen2</span><span class="p">.</span><span class="n">5-coder</span><span class="p">:</span><span class="n">32b-instruct-q4_K_M</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">devstral-small</span><span class="p">-</span><span class="n">2</span><span class="p">:</span><span class="n">24b</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">glm</span><span class="p">-</span><span class="n">4</span><span class="p">.</span><span class="n">7-flash</span><span class="p">:</span><span class="n">q4_K_M</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3-coder-next</span><span class="p">:</span><span class="n">q4_K_M</span>   <span class="c"># 51 GB — sehr groß</span>
+
+<span class="c"># Quantisierungs-Varianten (Studie ausstehend):</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3</span><span class="p">.</span><span class="n">6</span><span class="p">:</span><span class="n">27b-q8_0</span>          <span class="c"># 29 GB</span>
+<span class="n">ollama</span> <span class="n">pull</span> <span class="n">qwen3</span><span class="p">:</span><span class="n">32b</span>                 <span class="c"># 20 GB — noch nicht getestet</span>
+</code></pre></div>
+<h3 id="1c-ollama-konfiguration-prufen">1c. Ollama-Konfiguration prüfen<a class="headerlink" href="#1c-ollama-konfiguration-prufen" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">ollama</span> <span class="n">list</span>       <span class="c"># Alle installierten Modelle</span>
+<span class="n">ollama</span> <span class="nb">ps </span>        <span class="c"># Aktuell geladene Modelle</span>
+<span class="nb">curl </span><span class="n">http</span><span class="p">://</span><span class="n">localhost</span><span class="p">:</span><span class="n">11434</span><span class="p">/</span><span class="n">api</span><span class="p">/</span><span class="n">version</span>  <span class="c"># API erreichbar?</span>
+</code></pre></div>
+<hr />
+<h2 id="2-llamacpp-lokale-llms-gpu-optimiert">2. llama.cpp (lokale LLMs, GPU-optimiert)<a class="headerlink" href="#2-llamacpp-lokale-llms-gpu-optimiert" title="Permanent link">&para;</a></h2>
+<h3 id="2a-binaries-wiederherstellen">2a. Binaries wiederherstellen<a class="headerlink" href="#2a-binaries-wiederherstellen" title="Permanent link">&para;</a></h3>
+<p>llama.cpp ist <strong>nicht via winget installiert</strong> — die Binaries liegen im Benutzerordner:</p>
+<div class="highlight"><pre><span></span><code>C:\Users\z000g9hu\llama.cpp\
+├── bin\
+│   ├── llama-server.exe    ← Haupt-Binary (Server-Modus, empfohlen)
+│   └── llama.exe           ← CLI-Fallback
+└── models\                 ← GGUF-Modelle (lokal, nicht OneDrive)
+    ├── gpt-oss-20b-MXFP4.gguf           (11.3 GB)
+    └── Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf (20.8 GB)
+</code></pre></div>
+<p><strong>Wenn <code>llama-server.exe</code> fehlt:</strong> Aktuellen Release von GitHub holen:
+<div class="highlight"><pre><span></span><code><span class="c"># Neuesten Release von github.com/ggml-org/llama.cpp herunterladen</span>
+<span class="c"># Windows CUDA-Build wählen: llama-b*-bin-win-cuda-cu12.*.zip</span>
+<span class="c"># Entpacken nach C:\Users\z000g9hu\llama.cpp\bin\</span>
+</code></pre></div></p>
+<h3 id="2b-gguf-modelle">2b. GGUF-Modelle<a class="headerlink" href="#2b-gguf-modelle" title="Permanent link">&para;</a></h3>
+<p>Die GGUF-Dateien müssen nach <code>C:\Users\z000g9hu\llama.cpp\models\</code> gelegt werden.
+Sie sind NICHT in OneDrive gesichert (zu groß). Bei Neuinstallation von HuggingFace herunterladen:</p>
+<table>
+<thead>
+<tr>
+<th>Modell</th>
+<th>HuggingFace</th>
+<th>Größe</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>gpt-oss-20b-MXFP4.gguf</td>
+<td>Microsoft/gpt-oss-20b-MXFP4-GGUF</td>
+<td>11.3 GB</td>
+</tr>
+<tr>
+<td>Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf</td>
+<td>Qwen/Qwen3.6-35B-A3B-GGUF</td>
+<td>20.8 GB</td>
+</tr>
+</tbody>
+</table>
+<h3 id="2c-test">2c. Test<a class="headerlink" href="#2c-test" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="p">&amp;</span> <span class="s2">&quot;C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe&quot;</span> <span class="p">-</span><span class="n">-version</span>
+</code></pre></div>
+<hr />
+<h2 id="3-siemens-llm-cloud-uber-apisiemenscom">3. Siemens LLM (Cloud, über api.siemens.com)<a class="headerlink" href="#3-siemens-llm-cloud-uber-apisiemenscom" title="Permanent link">&para;</a></h2>
+<h3 id="3a-token-erstellen">3a. Token erstellen<a class="headerlink" href="#3a-token-erstellen" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Browser: <a href="https://my.siemens.com">my.siemens.com</a> → <strong>"LLM API"</strong> → Token erstellen</li>
+<li>Scope: <code>llm</code></li>
+<li>Token beginnt mit <code>SIAK-...</code></li>
+</ol>
+<h3 id="3b-token-speichern-one-time">3b. Token speichern (ONE-TIME)<a class="headerlink" href="#3b-token-speichern-one-time" title="Permanent link">&para;</a></h3>
+<p><div class="highlight"><pre><span></span><code>C:\Users\z000g9hu\OneDrive - Siemens AG\tools\myconfigfiles\code.siemens.com_api_ai_token.txt
+</code></pre></div>
+Nur den Token reinschreiben, nichts anderes. Die Datei liegt in OneDrive — sie überlebt jede Neuinstallation.</p>
+<blockquote>
+<p>⚠️ Token hat eine Laufzeit. Wenn die Siemens-Modelle 401-Fehler zurückgeben, Token erneuern
+und Datei aktualisieren, dann <code>configure_siemens_llm.ps1</code> erneut ausführen.</p>
+</blockquote>
+<h3 id="3c-konfiguration-einrichten-einzeiler">3c. Konfiguration einrichten (Einzeiler)<a class="headerlink" href="#3c-konfiguration-einrichten-einzeiler" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="p">`</span>
+  <span class="s2">&quot;C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\configure_siemens_llm.ps1&quot;</span>
+</code></pre></div>
+<p>Das Skript richtet automatisch ein:
+- ✅ <strong>VS Code</strong> (<code>chatLanguageModels.json</code>) → Modelle im Model-Picker
+- ✅ <strong>VS Code Portable</strong> (<code>C:\tools\PortableApps\VSCode\...</code>)
+- ✅ <strong>Env-Vars</strong> <code>SIEMENS_LLM_API_KEY</code> und <code>OPENAI_API_KEY</code> (User-Level, persistent)
+- ✅ <strong>OpenCode</strong> (<code>~/.config/opencode/opencode.json</code>) für TUI-Betrieb
+- ✅ <strong>Continue Extension</strong> (<code>~/.continue/config.yaml</code>) wenn installiert</p>
+<p><strong>Siemens-Modelle nach Einrichtung:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Modell-ID</th>
+<th>Name in VS Code</th>
+<th>Context</th>
+<th>Vision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deepseek-v4-flash</code></td>
+<td>Siemens DeepSeek V4 Flash</td>
+<td>1M Token</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>qwen-3.6-27b</code></td>
+<td>Siemens Qwen 3.6 27B</td>
+<td>262K Token</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>ministral-3-14b-instruct-2512</code></td>
+<td>Siemens Ministral 3-14B</td>
+<td>256K Token</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>API-Endpunkt:</strong> <code>https://api.siemens.com/llm/v1/chat/completions</code></p>
+<h3 id="3d-verifizieren">3d. Verifizieren<a class="headerlink" href="#3d-verifizieren" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c"># Token aus Datei lesen und Verbindung testen:</span>
+<span class="nv">$token</span> <span class="p">=</span> <span class="nb">Get-Content</span> <span class="s2">&quot;C:\Users\z000g9hu\OneDrive - Siemens AG\tools\myconfigfiles\code.siemens.com_api_ai_token.txt&quot;</span> <span class="n">-Raw</span> <span class="p">|</span> <span class="k">ForEach</span><span class="n">-Object</span> <span class="p">{</span> <span class="nv">$_</span><span class="p">.</span><span class="n">Trim</span><span class="p">()</span> <span class="p">}</span>
+<span class="nv">$headers</span> <span class="p">=</span> <span class="p">@{</span> <span class="n">Authorization</span> <span class="p">=</span> <span class="s2">&quot;Bearer $token&quot;</span><span class="p">;</span> <span class="s2">&quot;Content-Type&quot;</span> <span class="p">=</span> <span class="s2">&quot;application/json&quot;</span> <span class="p">}</span>
+<span class="nv">$body</span> <span class="p">=</span> <span class="s1">&#39;{&quot;model&quot;:&quot;ministral-3-14b-instruct-2512&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Hi&quot;}],&quot;max_tokens&quot;:5}&#39;</span>
+<span class="nb">Invoke-RestMethod</span> <span class="n">-Uri</span> <span class="s2">&quot;https://api.siemens.com/llm/v1/chat/completions&quot;</span> <span class="n">-Method</span> <span class="n">Post</span> <span class="n">-Headers</span> <span class="nv">$headers</span> <span class="n">-Body</span> <span class="nv">$body</span>
+</code></pre></div>
+<hr />
+<h2 id="4-benchmark-workbench-einrichten">4. Benchmark-Workbench einrichten<a class="headerlink" href="#4-benchmark-workbench-einrichten" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c"># Repo klonen (falls nicht vorhanden):</span>
+<span class="n">git</span> <span class="n">clone</span> <span class="n">https</span><span class="p">://</span><span class="n">github</span><span class="p">.</span><span class="n">com</span><span class="p">/</span><span class="n">thomasdenk79-cyber</span><span class="p">/</span><span class="n">llm-evaluation-workbench</span><span class="p">.</span><span class="n">git</span> <span class="n">D</span><span class="p">:\</span><span class="n">git</span><span class="p">\</span><span class="n">llm-evaluation-workbench</span>
+
+<span class="c"># Oder via OneDrive (falls synchronisiert):</span>
+<span class="c"># D:\git ist oft mit &quot;C:\Users\z000g9hu\OneDrive - Siemens AG\GIT\&quot; verknüpft</span>
+
+<span class="nb">cd </span><span class="n">D</span><span class="p">:\</span><span class="n">git</span><span class="p">\</span><span class="n">llm-evaluation-workbench</span>
+
+<span class="c"># Dependencies installieren:</span>
+<span class="n">pip</span> <span class="n">install</span> <span class="n">-r</span> <span class="n">requirements</span><span class="p">.</span><span class="n">txt</span>  <span class="c"># psutil&gt;=5.9</span>
+</code></pre></div>
+<h3 id="4b-schnelltest-nach-setup">4b. Schnelltest nach Setup<a class="headerlink" href="#4b-schnelltest-nach-setup" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="nb">cd </span><span class="n">D</span><span class="p">:\</span><span class="n">git</span><span class="p">\</span><span class="n">llm-evaluation-workbench</span>
+
+<span class="c"># Ollama-Test (qwen3-coder:30b, 3 Runs):</span>
+<span class="n">python</span> <span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">llm_migration_benchmark</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-backend</span> <span class="n">ollama</span> <span class="p">-</span><span class="n">-ollama-models</span> <span class="s2">&quot;qwen3-coder:30b&quot;</span> <span class="p">-</span><span class="n">-runs</span> <span class="n">1</span>
+
+<span class="c"># Siemens-Test (Token aus Env-Var oder OneDrive-Datei automatisch gefunden):</span>
+<span class="n">python</span> <span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">llm_migration_benchmark</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-backend</span> <span class="n">siemens</span> <span class="p">-</span><span class="n">-runs</span> <span class="n">1</span>
+
+<span class="c"># Alle Backends:</span>
+<span class="n">python</span> <span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">llm_migration_benchmark</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-backend</span> <span class="n">all</span> <span class="p">-</span><span class="n">-runs</span> <span class="n">1</span>
+</code></pre></div>
+<hr />
+<h2 id="5-windows-power-profile-fur-benchmark-genauigkeit">5. Windows Power-Profile (für Benchmark-Genauigkeit)<a class="headerlink" href="#5-windows-power-profile-fur-benchmark-genauigkeit" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="c"># Ultimatives Power-Profil aktivieren (liegt im Autoinstaller):</span>
+<span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="p">`</span>
+  <span class="s2">&quot;C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\activate_ultimative_powerplan.ps1&quot;</span>
+
+<span class="c"># Oder manuell:</span>
+<span class="c"># Balanced:   powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e</span>
+<span class="c"># High-Perf:  powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c</span>
+</code></pre></div>
+<blockquote>
+<p>Benchmark-Erfahrung: <strong>Balanced schlägt High-Perf bei llama.cpp</strong> (84 vs 50 TPS bei gpt-oss).
+Immer beide Profile testen und vergleichen!</p>
+</blockquote>
+<hr />
+<h2 id="6-vs-code-chat-verlauf-wiederherstellen">6. VS Code Chat-Verlauf wiederherstellen<a class="headerlink" href="#6-vs-code-chat-verlauf-wiederherstellen" title="Permanent link">&para;</a></h2>
+<p>Der Chat-Verlauf (Copilot-Sessions, Agent-Memories) wird von <code>backup_vscode_chat.ps1</code> gesichert.</p>
+<div class="highlight"><pre><span></span><code><span class="c"># Backup liegt in OneDrive:</span>
+<span class="c"># C:\Users\z000g9hu\OneDrive - Siemens AG\ai_agent\vscode-chat-backup\</span>
+
+<span class="c"># Wiederherstellen:</span>
+<span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="o">-File</span> <span class="p">`</span>
+  <span class="s2">&quot;C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\restore_vscode_chat.ps1&quot;</span>
+</code></pre></div>
+<hr />
+<h2 id="7-datei-uberblick-was-wo-liegt">7. Datei-Überblick: Was wo liegt<a class="headerlink" href="#7-datei-uberblick-was-wo-liegt" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Was</th>
+<th>Pfad</th>
+<th>In OneDrive?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Siemens API Token</td>
+<td><code>OneDrive\tools\myconfigfiles\code.siemens.com_api_ai_token.txt</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>VS Code chatLanguageModels.json</td>
+<td><code>%APPDATA%\Code\User\chatLanguageModels.json</code></td>
+<td>❌ (via Script)</td>
+</tr>
+<tr>
+<td>Ollama Modelle</td>
+<td><code>C:\Users\z000g9hu\.ollama\models\</code></td>
+<td>❌ (re-download)</td>
+</tr>
+<tr>
+<td>GGUF Modelle</td>
+<td><code>C:\Users\z000g9hu\llama.cpp\models\</code></td>
+<td>❌ (re-download)</td>
+</tr>
+<tr>
+<td>llama.cpp Binaries</td>
+<td><code>C:\Users\z000g9hu\llama.cpp\bin\</code></td>
+<td>❌ (re-download)</td>
+</tr>
+<tr>
+<td>Benchmark-Repo</td>
+<td><code>D:\git\llm-evaluation-workbench\</code></td>
+<td>✅ (via git+OneDrive)</td>
+</tr>
+<tr>
+<td>Setup-Scripts</td>
+<td><code>OneDrive\tools\scripts\</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>VS Code Chat-Backup</td>
+<td><code>OneDrive\ai_agent\vscode-chat-backup\</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>Autoinstaller-Config</td>
+<td><code>OneDrive\tools\scripts\autoinstaller_config.ini</code></td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-autoinstaller-integration">8. Autoinstaller-Integration<a class="headerlink" href="#8-autoinstaller-integration" title="Permanent link">&para;</a></h2>
+<p>Der <strong>Tommy Win11 Autoinstaller</strong> (<code>TommysWin11Autoinstaller.bat</code>) kennt die Kategorie <code>ai_tools</code>:
+<div class="highlight"><pre><span></span><code><span class="k">[actions.ai_tools]</span>
+<span class="na">powershell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">backup_vscode_chat.ps1|configure_siemens_llm.ps1</span>
+</code></pre></div></p>
+<p>Das bedeutet: Nach Windows-Neuinstallation einfach den Autoinstaller starten,
+Kategorie <strong>"AI Tools"</strong> anklicken → Siemens LLM wird automatisch konfiguriert.</p>
+<p>Ollama und llama.cpp müssen manuell installiert werden (zu groß für Autoinstaller).</p>
+<hr />
+<h2 id="9-checkliste-neuinstallation">9. Checkliste Neuinstallation<a class="headerlink" href="#9-checkliste-neuinstallation" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>[ ] Python 3.13 installiert (winget install Python.Python.3.13)
+[ ] Git installiert (winget install Git.Git)
+[ ] VS Code installiert (winget install Microsoft.VisualStudioCode)
+[ ] GitHub Copilot Extension installiert (ms-vscode.copilot)
+[ ] Ollama installiert (winget install Ollama.Ollama)
+[ ] Ollama Modelle heruntergeladen (mindestens qwen3-coder:30b + gpt-oss:20b)
+[ ] llama.cpp Binaries nach C:\Users\...\llama.cpp\bin\ kopiert/entpackt
+[ ] GGUF-Modelle nach C:\Users\...\llama.cpp\models\ kopiert/heruntergeladen
+[ ] Siemens Token in code.siemens.com_api_ai_token.txt vorhanden (OneDrive)
+[ ] configure_siemens_llm.ps1 ausgeführt
+[ ] pip install -r requirements.txt (im Benchmark-Repo)
+[ ] Schnelltest: python llm_migration_benchmark.py --backend ollama --runs 1
+[ ] Schnelltest: python llm_migration_benchmark.py --backend siemens --runs 1
+[ ] VS Code neu laden (Ctrl+Shift+P → Reload Window)
+[ ] Siemens-Modelle im Model-Picker sichtbar
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Zurück zum Seitenanfang
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Fußzeile" >
+        
+          
+          <a href="../../project/changelog/" class="md-footer__link md-footer__link--prev" aria-label="Zurück: Changelog">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Zurück
+              </span>
+              <div class="md-ellipsis">
+                Changelog
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../runbook/" class="md-footer__link md-footer__link--next" aria-label="Weiter: Runbook">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Weiter
+              </span>
+              <div class="md-ellipsis">
+                Runbook
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.top", "navigation.footer", "content.code.copy", "content.action.edit", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "In Zwischenablage kopiert", "clipboard.copy": "In Zwischenablage kopieren", "search.result.more.one": "1 weiteres Suchergebnis auf dieser Seite", "search.result.more.other": "# weitere Suchergebnisse auf dieser Seite", "search.result.none": "Keine Suchergebnisse", "search.result.one": "1 Suchergebnis", "search.result.other": "# Suchergebnisse", "search.result.placeholder": "Suchbegriff eingeben", "search.result.term.missing": "Es fehlt", "select.version": "Version ausw\u00e4hlen"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

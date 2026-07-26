@@ -51,3 +51,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 `
 - Fuer konsistente Vergleiche immer gleiche Prompts, Seeds und Sampling-Settings nutzen.
 - Bei starken Score-Abweichungen zwischen Backends zuerst Parametergleichheit pruefen.
 - Aktive VSCode/Ollama/andere Last kann Messergebnisse verfälschen.
+
+## License
+
+Aktuell noch ohne finalen OSS-Lizenzentscheid.
+Bis zur finalen Freigabe bitte als "all rights reserved" behandeln.

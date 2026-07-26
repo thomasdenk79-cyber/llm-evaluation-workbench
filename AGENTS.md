@@ -100,12 +100,26 @@ Stand: 2026-07-29 — `ollama list`
 
 | Modell-ID | Name | Context | Vision | Benchmark-Status |
 |---|---|---|---|---|
-| `deepseek-v4-flash` | Siemens DeepSeek V4 Flash | 1M Token | ❌ | ❌ Noch nicht getestet |
-| `qwen-3.6-27b` | Siemens Qwen 3.6 27B | 262K Token | ✅ | ❌ Noch nicht getestet |
-| `ministral-3-14b-instruct-2512` | Siemens Ministral 3-14B | 256K Token | ✅ | ❌ Noch nicht getestet |
+| `deepseek-v4-flash` | Siemens DeepSeek V4 Flash | 1M Token | ❌ | ✅ Getestet 2026-07-26 |
+| `qwen-3.6-27b` | Siemens Qwen 3.6 27B | 262K Token | ✅ | ✅ Getestet 2026-07-26 |
+| `ministral-3-14b-instruct-2512` | Siemens Ministral 3-14B | 256K Token | ✅ | ✅ Getestet 2026-07-26 |
+
+**Erstes Benchmark-Ergebnis (2026-07-26, 1 Run, Migration-Tasks):**
+
+| Modell | Overall | Qualität% | TPS | Wall-ms | CPU% |
+|---|---|---|---|---|---|
+| `qwen-3.6-27b` | **83.33** | **88.89** | 99 | 1 346 | 54 |
+| `ministral-3-14b-instruct-2512` | 70.00 | 83.33 | 38 | 3 606 | 40 |
+| `deepseek-v4-flash` | 36.50 | 18.17 | 98 | 2 548 | 54 |
+
+> **Hinweis:** DeepSeek V4 Flash hat schlechte Migrations-Qualität (18%) — vermutlich
+> antwortet es ohne Markdown-Wrapper anders als erwartet. Mehr Runs und Prompt-Anpassung nötig.
+> Qwen 3.6 27B ist der klare Siemens-Favorit: 89% Qualität bei 99 TPS!
 
 **Wichtig für `qwen-3.6-27b`:** Das Modell hat standardmäßig Thinking-Mode aktiv.
 Das Skript deaktiviert ihn automatisch via `chat_template_kwargs: {enable_thinking: false}`.
+
+**Token-Datei-Format:** Datei enthält 2 Zeilen — Skript liest automatisch nur die `SIAK-`-Zeile.
 
 ---
 

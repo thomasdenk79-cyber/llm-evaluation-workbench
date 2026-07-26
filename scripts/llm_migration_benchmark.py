@@ -233,9 +233,14 @@ def load_siemens_token(args: argparse.Namespace) -> Optional[str]:
     for path in candidates:
         try:
             with open(path, encoding="utf-8") as fh:
-                t = fh.read().strip()
-                if t:
-                    return t
+                # Token file may contain extra lines (e.g. a URL) — take only the SIAK- line
+                for line in fh:
+                    t = line.strip()
+                    if t.startswith("SIAK-"):
+                        return t
+                    if t and not t.startswith("http"):
+                        # Non-URL, non-empty first line as fallback
+                        return t
         except OSError:
             continue
     return None
@@ -1262,8 +1267,10 @@ def print_summary(results: List[BenchResult]) -> None:
             avg_quality = 0.0
             avg_wall = 0.0
             avg_tps = None
-        cpu_avg = mean(i.avg_cpu_pct for i in ok if i.avg_cpu_pct is not None) if ok else None
-        gpu_avg = mean(i.avg_gpu_pct for i in ok if i.avg_gpu_pct is not None) if ok else None
+        cpu_vals = [i.avg_cpu_pct for i in ok if i.avg_cpu_pct is not None]
+        gpu_vals = [i.avg_gpu_pct for i in ok if i.avg_gpu_pct is not None]
+        cpu_avg = mean(cpu_vals) if cpu_vals else None
+        gpu_avg = mean(gpu_vals) if gpu_vals else None
         reliability = (len(ok) / len(items)) * 100.0 if items else 0.0
         rows.append(
             {

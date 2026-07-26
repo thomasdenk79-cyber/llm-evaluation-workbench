@@ -52,6 +52,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 `
 - Bei starken Score-Abweichungen zwischen Backends zuerst Parametergleichheit pruefen.
 - Aktive VSCode/Ollama/andere Last kann Messergebnisse verfälschen.
 
+## Automation
+
+- GitHub Actions CI:
+  - Python Compile Checks
+  - Benchmark CLI Smoke Test (`--help`)
+- CodeQL Security Scan (Push/PR + Weekly Schedule)
+- Dependabot fuer Python-Dependencies und GitHub Actions
+
 ## License
 
 Aktuell noch ohne finalen OSS-Lizenzentscheid.

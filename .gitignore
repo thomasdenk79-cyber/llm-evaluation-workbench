@@ -9,3 +9,5 @@ benchmark_results/
 .env
 *.token
 *_token.txt
+
+site/

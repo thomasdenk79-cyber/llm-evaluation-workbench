@@ -1,0 +1,68 @@
+site_name: LLM Evaluation Workbench
+site_description: Benchmark-Workbench fuer lokale und Siemens-Cloud-LLMs — Oracle-zu-PostgreSQL-Migration
+site_author: Thomas Denk
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+
+repo_name: thomasdenk79-cyber/llm-evaluation-workbench
+repo_url: https://github.com/thomasdenk79-cyber/llm-evaluation-workbench
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: de
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Helles Design
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Dunkles Design
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Start: index.md
+  - Konzepte:
+    - KI-Agenten als Team: ki-team-konzept.md
+    - Benchmark-Ergebnisse: project/results.md
+    - Changelog: project/changelog.md
+  - Entwickler:
+    - Setup (neuer PC): operations/setup-new-pc.md
+    - Runbook: operations/runbook.md
+    - Doku-Richtlinien: engineering/documentation-guidelines.md
+    - KI-Konzept (Detail): engineering/ki-agenten-konzept.md

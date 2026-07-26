@@ -1,0 +1,11 @@
+backend,model,welcher_test,seit_wann_model_lokal,vram_usage_gb,ram_usage_gb,laufzeit_bench_s,score,token_per_s,bewertung_gesamt_preis_leistung,avg_cpu_pct,avg_gpu_pct,startup_ms,shutdown_ms
+ollama,deepseek-coder-v2-16b,Oracle->PostgreSQL 3-Case (mini SW bench),3 days ago,9.10,38.28,23.11,84.13,55.15,509.62,42.3,47.9,6717.2,492.4
+ollama,qwen3-coder-30b,Oracle->PostgreSQL 3-Case (mini SW bench),3 days ago,10.11,44.83,32.45,88.89,28.46,250.11,40.0,33.0,24088.7,754.5
+ollama,qwen3.6-35b-q4,Oracle->PostgreSQL 3-Case (mini SW bench),3 days ago,9.89,49.48,46.78,72.22,19.83,144.83,44.8,44.2,25147.4,664.5
+llama_cpp,qwen3.6-35b-q4,Oracle->PostgreSQL 3-Case (llama.cpp tuned B),3 days ago,3.29,56.63,79.28,72.22,4.95,108.72,83.7,50.0,21039.5,801.3
+llama_cpp,deepseek-coder-v2-16b,Oracle->PostgreSQL 3-Case (llama.cpp tuned B),3 days ago,11.16,59.34,25.82,72.22,14.74,95.40,63.6,35.0,9822.8,1028.2
+ollama,gpt-oss-20b,Oracle->PostgreSQL 3-Case (mini SW bench),3 days ago,9.84,41.05,55.16,44.05,17.64,78.94,43.7,55.5,31234.2,752.5
+llama_cpp,gpt-oss-20b,Oracle->PostgreSQL 3-Case (llama.cpp tuned B),3 days ago,3.62,57.18,133.18,59.72,4.07,67.21,81.8,58.2,16444.4,1400.4
+llama_cpp,qwen3-coder-30b,Oracle->PostgreSQL 3-Case (llama.cpp tuned B),3 days ago,11.15,72.77,39.71,72.22,8.53,55.21,69.3,38.2,23216.2,1955.0
+llama_cpp,qwen3.6-27b-q4,Oracle->PostgreSQL 3-Case (llama.cpp tuned B),3 days ago,2.76,51.84,239.18,88.89,1.50,48.43,74.5,51.8,17564.0,1331.1
+ollama,qwen3.6-27b-q4,Oracle->PostgreSQL 3-Case (mini SW bench),3 days ago,10.76,48.30,147.69,83.33,3.71,28.71,54.8,43.3,,

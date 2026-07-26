@@ -1,0 +1,62 @@
+[
+  {
+    "backend": "ollama",
+    "model": "qwen3.6:27b-q4_K_M",
+    "quality": 100.0,
+    "hits": 6,
+    "wall_ms": 29663.750799998525,
+    "tps": 4.0011999153968505,
+    "cpu": 31.780392156862746,
+    "gpu": 23.392156862745097,
+    "vram": 6903.058823529412,
+    "preview": "Linny's Epic Time Portal shows all important event windows, precise countdowns, notifications, and calendar export at a glance. The page is usable offline as a PWA."
+  },
+  {
+    "backend": "ollama",
+    "model": "qwen3.6:35b-a3b-q4_K_M",
+    "quality": 100.0,
+    "hits": 6,
+    "wall_ms": 29346.68969998893,
+    "tps": 36.92632822291225,
+    "cpu": 19.85576923076923,
+    "gpu": 15.673076923076923,
+    "vram": 7386.0,
+    "preview": "Linny's Epic Time Portal displays all important event windows, precise countdowns, notifications, and calendar export at a glance. The page can be used as an offline-capable PWA."
+  },
+  {
+    "backend": "ollama",
+    "model": "gpt-oss:20b",
+    "quality": 83.33333333333334,
+    "hits": 5,
+    "wall_ms": 22859.123900008854,
+    "tps": 45.05865798969645,
+    "cpu": 23.755,
+    "gpu": 21.875,
+    "vram": 7311.825,
+    "preview": "Linny’s Epic Time Portal displays all the key event windows, precise countdowns, notifications and a calendar export at a glance. The site can be used offline as a PWA."
+  },
+  {
+    "backend": "llama_cpp",
+    "model": "qwen3.6:35b-a3b-q4_K_M",
+    "quality": 100.0,
+    "hits": 6,
+    "wall_ms": 9945.316299999831,
+    "tps": 3.7203442187153595,
+    "cpu": 74.50555555555556,
+    "gpu": 58.55555555555556,
+    "vram": 11885.888888888889,
+    "preview": "Linny's Epic Time Portal displays all important event windows, precise countdowns, notifications, and calendar export at a glance. The page can be used offline as a PWA."
+  },
+  {
+    "backend": "llama_cpp",
+    "model": "gpt-oss:20b",
+    "quality": 100.0,
+    "hits": 6,
+    "wall_ms": 6500.277700004517,
+    "tps": 33.84470789607144,
+    "cpu": 85.47272727272727,
+    "gpu": 38.90909090909091,
+    "vram": 10793.818181818182,
+    "preview": "<|channel|>analysis<|message|>We need to translate the German text into natural English, keep product names and proper nouns unchanged. No markdown, no explanations, just translati"
+  }
+]

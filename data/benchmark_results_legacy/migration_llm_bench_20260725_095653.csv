@@ -1,0 +1,10 @@
+backend,model,case_id,case_title,run,wall_ms,prompt_tokens,output_tokens,output_tps,quality_score,keyword_hits,keyword_total,avg_cpu_pct,max_cpu_pct,avg_mem_pct,max_mem_pct,avg_gpu_pct,max_gpu_pct,avg_vram_used_mb,max_vram_used_mb,cpu_time_sec,error
+ollama,qwen3.6:27b-q4_K_M,ddl_conversion,Oracle DDL to PostgreSQL,1,85388.00,107,180,2.88,0.00,0,7,63.08,100.00,22.86,23.60,39.65,100.00,10180.23,11788.00,1.078,
+ollama,qwen3.6:27b-q4_K_M,plsql_to_plpgsql,PL/SQL to PLpgSQL,1,70689.69,132,180,2.67,0.00,0,7,72.14,100.00,23.57,23.70,41.32,100.00,11566.05,11912.00,1.031,
+ollama,qwen3.6:27b-q4_K_M,validation_query,Migration validation SQL,1,63722.77,47,180,2.96,0.00,0,6,74.44,100.00,23.53,23.60,26.06,68.00,11512.76,11524.00,1.141,
+ollama,qwen3.6:35b-a3b-q4_K_M,ddl_conversion,Oracle DDL to PostgreSQL,1,46473.47,107,180,23.80,0.00,0,7,27.42,79.00,24.69,26.50,24.73,99.00,8653.96,11512.00,0.344,
+ollama,qwen3.6:35b-a3b-q4_K_M,plsql_to_plpgsql,PL/SQL to PLpgSQL,1,10057.20,132,180,24.42,0.00,0,7,65.77,99.30,26.51,26.60,30.62,39.00,11417.12,11426.00,0.156,
+ollama,qwen3.6:35b-a3b-q4_K_M,validation_query,Migration validation SQL,1,9861.12,47,180,23.98,0.00,0,6,63.89,77.50,26.58,26.60,33.12,83.00,11424.00,11431.00,0.047,
+ollama,gpt-oss:20b,ddl_conversion,Oracle DDL to PostgreSQL,1,34618.04,,,,0.00,0,7,17.17,60.70,21.71,26.60,21.08,96.00,7982.14,11427.00,0.203,Ollama connection failed: HTTP Error 500: Internal Server Error
+ollama,gpt-oss:20b,plsql_to_plpgsql,PL/SQL to PLpgSQL,1,20700.43,187,180,30.42,0.00,0,7,34.18,77.70,20.37,21.40,31.81,97.00,6007.17,11075.00,0.188,
+ollama,gpt-oss:20b,validation_query,Migration validation SQL,1,9173.79,106,180,27.09,0.00,0,6,59.33,78.40,21.40,21.40,52.88,99.00,11078.25,11086.00,0.016,

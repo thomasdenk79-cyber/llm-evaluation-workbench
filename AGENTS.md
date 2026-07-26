@@ -1,5 +1,14 @@
 # AGENTS.md — Lebendes Projektgedächtnis (SSOT)
 
+> ## 🚨 SOFORTAKTION — BEVOR DU IRGENDETWAS FRAGST:
+>
+> **Springe jetzt zu Abschnitt 5.1 ("Aktueller Stand") und führe den dort angegebenen
+> "Nächster Schritt"-Befehl aus. Frage den Nutzer NICHT was zu tun ist — der Stand steht bereits drin.**
+>
+> Danach diese Datei vollständig lesen (dauert ~2 Minuten, spart Stunden Rückfragen).
+
+---
+
 > **Für jeden Agent der hier arbeitet — PFLICHTLEKTÜRE vor jeder Aktion:**
 >
 > Diese Datei ist das vollständige Gedächtnis des Projekts. Sie ersetzt jeden Onboarding-Chat.

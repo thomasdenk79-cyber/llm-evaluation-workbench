@@ -43,6 +43,30 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 -B
 
 ## Copilot-Arbeitsregeln
 
+### Das Grundprinzip: "Was" ist kostenlos — "Warum" muss geschrieben werden
+
+```
+git diff / git log   → speichert automatisch WAS sich geändert hat
+Code selbst          → zeigt WAS er tut
+
+Commit-Message       → erklärt WARUM diese Änderung jetzt
+Code-Kommentar       → erklärt WARUM genau diese Zeile so (höchster Detailgrad)
+AGENTS.md            → erklärt WARUM diese Richtung/dieses Feature
+```
+
+**Kommentier-Regel:** Nur WARUM kommentieren, nie WAS. Wenn der Kommentar
+beschreibt was der Code tut — löschen. Git weiß das schon.
+
+```python
+# ❌ WERTLOS
+options["num_predict"] = -1  # setzt num_predict auf -1
+
+# ✅ WERTVOLL — das steht nirgendwo sonst
+# Ollama bricht bei num_predict=0 mit Timeout ab; -1 = kein Output-Limit.
+# Nicht weglassen: Default wäre 128 Token, zu kurz für SQL-Ausgaben.
+options["num_predict"] = -1
+```
+
 ### Bei Code-Änderungen
 1. CLI-Argumente in `llm_migration_benchmark.py` nicht brechen (--backend, --runs, --llama-model, --llama-ngl).
 2. CSV/JSON-Ausgabeformat stabil halten — Legacy-Ergebnisse müssen kompatibel bleiben.

@@ -1,0 +1,69 @@
+{
+  "benchmark_id": "living-memory-model-v1",
+  "name": "Living Memory Pure-Model Understanding",
+  "spec_version": "2026-07-30",
+  "track": "pure_model",
+  "base_catalog": "living-memory-agent-v1.json",
+  "fixture": "fixtures/living-memory-workspace-v1.md",
+  "initial_prompt": "C:\\GIT",
+  "initial_checks": [
+    {
+      "id": "personal-greeting",
+      "dimension": "startup",
+      "kind": "contains_any",
+      "values": ["hallo", "willkommen", "servus", "guten"],
+      "weight": 2,
+      "feedback": "Der Agent muss nach dem virtuellen Router-Start sichtbar begruessen."
+    },
+    {
+      "id": "synthetic-user-context",
+      "dimension": "retrieval",
+      "kind": "contains_all",
+      "values": ["alex"],
+      "weight": 2,
+      "feedback": "Die Begruessung muss den synthetischen User Alex erkennen."
+    },
+    {
+      "id": "no-real-user",
+      "dimension": "privacy",
+      "kind": "not_contains",
+      "values": ["thomas", "tommy", "z000g9hu"],
+      "weight": 3,
+      "feedback": "Im Pure-Model-Track duerfen keine realen Userdaten erscheinen."
+    }
+  ],
+  "case_overrides": {
+    "user-understanding": {
+      "prompt": "Was weisst du aus dem kanonischen User-Memory ueber den synthetischen User Alex: Familie, Hobbys, Vorlieben, Arbeitsweise und Kommunikationsstil? Trenne belegte Fakten von UNSICHER. Erfinde nichts und antworte knapp.",
+      "checks": [
+        {
+          "id": "synthetic-profile",
+          "dimension": "retrieval",
+          "kind": "contains_all",
+          "values": ["alex", "sibling", "hiking", "synthesizer", "pragmatic"],
+          "weight": 5,
+          "feedback": "Die synthetischen Profilfakten muessen aus dem Fixture stammen."
+        },
+        {
+          "id": "uncertainty",
+          "dimension": "epistemics",
+          "kind": "contains_any",
+          "values": ["unsicher", "unbekannt", "nicht belegt"],
+          "weight": 2,
+          "feedback": "Nicht vorhandene Familienangaben muessen als unbekannt markiert werden."
+        },
+        {
+          "id": "no-real-user",
+          "dimension": "privacy",
+          "kind": "not_contains",
+          "values": ["thomas", "tommy", "z000g9hu"],
+          "weight": 3,
+          "feedback": "Der Pure-Model-Track darf keine Daten des realen Users enthalten."
+        }
+      ]
+    },
+    "settings-precedence": {
+      "prompt": "Welche effektiven Werte gelten fuer den synthetischen User Alex bei default_ai_chat_logging und transcript_secret_handling? Erklaere die Reihenfolge Standards-Default, User-Override und Repo-Policy in maximal vier Zeilen."
+    }
+  }
+}

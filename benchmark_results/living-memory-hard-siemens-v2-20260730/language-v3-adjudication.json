@@ -1,0 +1,35 @@
+{
+  "policy": "Apply effective user_chat_lang before every response and reload it after a settings change.",
+  "models": [
+    {
+      "model": "siemens/ministral-3-14b-instruct-2512",
+      "startup_german": false,
+      "switch_to_english": true,
+      "finding": "Detected the changed setting but ignored the initial German override."
+    },
+    {
+      "model": "siemens/gpt-oss-120b",
+      "startup_german": false,
+      "switch_to_english": true,
+      "finding": "Used English both before and after the change."
+    },
+    {
+      "model": "siemens/qwen-3.6-27b",
+      "startup_german": true,
+      "switch_to_english": "partial",
+      "finding": "English status body followed by a German question."
+    },
+    {
+      "model": "siemens/deepseek-v4-flash",
+      "startup_german": true,
+      "switch_to_english": false,
+      "finding": "Continued in German after the canonical setting changed to English."
+    },
+    {
+      "model": "siemens/Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+      "startup_german": false,
+      "switch_to_english": false,
+      "finding": "Tool-agent session unavailable because the Siemens endpoint rejects automatic tool choice."
+    }
+  ]
+}

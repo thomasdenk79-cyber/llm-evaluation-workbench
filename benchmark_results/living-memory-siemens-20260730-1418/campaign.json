@@ -1,0 +1,38 @@
+{
+  "campaign_id": "living-memory-siemens-20260730-1418",
+  "started_at": "2026-07-30T14:18:00+02:00",
+  "completed_at": "2026-07-30T17:03:00+02:00",
+  "benchmark": "living-memory-model-v1",
+  "track": "pure_model",
+  "fixture_classification": "synthetic",
+  "chat_models": [
+    "deepseek-v4-flash",
+    "gpt-oss-120b",
+    "qwen-3.6-27b",
+    "Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+    "ministral-3-14b-instruct-2512"
+  ],
+  "excluded_non_chat_models": [
+    "bge-m3",
+    "qwen3-embedding-0.6b",
+    "qwen3-embedding-8b",
+    "qwen3-reranker-0.6b",
+    "whisper-large-v3-turbo"
+  ],
+  "exclusion_reason": "The excluded endpoints are embedding, reranking, or speech models and cannot answer the chat-completion benchmark.",
+  "execution": {
+    "serial": true,
+    "timeout_seconds": 900,
+    "request_attempts": 1,
+    "diagnostic_feedback": true,
+    "resume": true
+  },
+  "result_counts": {
+    "base_responses": 70,
+    "base_errors": 0,
+    "diagnostic_responses": 40,
+    "diagnostic_timeouts": 3,
+    "diagnostic_not_requested_at_threshold": 2,
+    "v2_focused_responses": 5
+  }
+}

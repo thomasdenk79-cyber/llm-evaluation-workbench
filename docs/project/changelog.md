@@ -1,5 +1,85 @@
 # Changelog
 
+## 2026-07-30 — Living-memory-Verstaendnisbenchmark
+
+- Tool-Agent-Katalog mit Startup-Navigation, Chatablage, WHY-Referenzen,
+  Memory-Routing, Settings-Vererbung, Owner-Policy und Session-Ende ergaenzt.
+- Deterministisches gewichtetes Scoring und diagnostische Fehlerrunde hinzugefuegt.
+- Getrennten Pure-Model-Track mit synthetischem Workspace-Fixture fuer Siemens und
+  Ollama gebaut; echte Userdaten werden nicht an Cloud-Modelle uebertragen.
+- Restricted Live-Workspace-Faelle technisch auf lokale `ollama/*`-Agenten begrenzt.
+- JSONL-Aggregation nach Track, Backend, Modell, Prioritaet und Dimension ergaenzt.
+- Alle fuenf chatfaehigen Siemens-Modelle mit 70 Basisfaellen getestet.
+- API-Fixture-Luecke im exakten Chat-Naming isoliert: Nach sechs Syntaxregeln und
+  einem Beispiel stiegen alle fuenf Modelle im fokussierten Nachtest auf 100 Prozent.
+- Vollstaendige Auswertung unter
+  `benchmark_results/living-memory-siemens-20260730-1418/` abgelegt.
+- Hard-Agent-V2 mit isolierten realen Tool-Workspaces ergaenzt: Inline-Warum,
+  User-/Agent-Memory, Owner-Denial, Autonomie, Chat-Evidenz und Git-Abschluss.
+- Windows-`opencode.cmd`, absolute/kurze Workspaces, fallweises Resume und
+  Capability-Fehler als persistente Resultate implementiert.
+- Kanonischen Sprachwechsel mit `user_chat_lang` separat nachgetestet.
+- Hard-Auswertung unter
+  `benchmark_results/living-memory-hard-siemens-v2-20260730/` abgelegt.
+
+## 2026-07-27 — Agent-Hierarchie und Projekt-Router konsolidiert
+
+- Doppelte Abschnitte aus `AGENTS.md` entfernt und die Datei als kompakten
+  Projekt-Router mit aktuellem Stand, kanonischen Quellen, Befehlen, Guardrails
+  und Memory-Routing neu strukturiert.
+- Parallele `.github/copilot-instructions.md` entfernt; `AGENTS.md` ist nun die
+  eindeutige globale Instruktionsquelle dieses Repositories.
+- Vererbung, lokale Overrides und `AI-ACCESS` gemäß der zentralen
+  `C:\GIT\AGENTS.md`-Hierarchie dokumentiert.
+
+## 2026-07-27 — Terminologie: Heuristik-Score + Sandbox-TODO im Report
+
+- `scripts/llm_migration_benchmark.py` angepasst:
+  - Tabellen-/Chart-Begriff `Score` auf `Heuristik-Score` umbenannt
+  - Detailreport-Spalte `Model score` auf `Model heuristik-score` umbenannt
+  - Report-Hinweis ergänzt, dass der Heuristik-Score keyword/rule-basiert ist
+  - TODO-Block ergänzt: späterer PostgreSQL+Python-Sandbox-Eval mit separatem Pass/Fail-Score
+- `README.md` und `AGENTS.md` Terminologie auf `Heuristik-Score` nachgezogen.
+
+## 2026-07-26 — Live-Status/ETA-Overhaul + Historien-CSV
+
+- `scripts/llm_migration_benchmark.py` erweitert:
+  - Live-Hauptansicht auf kompakte Modell-Status-Tabelle umgestellt
+    (15 geplante Zeilen: 5x Siemens, 5x Ollama, 5x llama.cpp)
+  - Zeit-/Planungsfelder ergänzt:
+    `Planned start`, `Run started`, `Last update`,
+    `Elapsed time`, `Elapsed left (est.)`, `ETA end`
+  - Gesamtblock für Kampagnenlauf ergänzt:
+    `Bulk/campaign started`, `Elapsed total`,
+    `Elapsed left (estimated)`, `Estimated total duration`, `Estimated finish`
+  - ETA-Logik auf modell-/slotbasierte Projektion umgestellt
+    (realistischere Gesamtschätzung bei gemischten laufenden/geplanten Slots)
+  - Live-Tabelle um AVG-Auslastungsmetriken erweitert:
+    `Tok/s`, `CPU%(avg)`, `GPU%(avg)`, `RAM GB(avg)`, `VRAM GB(avg)`
+  - RAM-Messung auf prozessbezogene Ermittlung umgestellt
+    (Ollama-/llama-Prozesse statt System-Gesamtlast); VRAM-Messung unverändert
+  - Bewertungsfelder in Live-Tabelle ergänzt: `Score`, `Rating`
+  - Visualisierung ergänzt:
+    `docs/project/benchmark_models_overview.svg`
+  - Detailansicht ausgelagert:
+    `docs/project/benchmark_report_details.md`
+  - Persistente Historie ergänzt:
+    finale Läufe werden append-only in
+    `benchmark_results/migration_llm_bench_history.csv` mit allen Detailspalten gespeichert
+  - Auto-Resume ergänzt:
+    `--resume auto` setzt nach Crash/Kill/Neustart auf dem letzten passenden
+    `*_inprogress.csv` auf und führt nur fehlende Samples erneut aus
+
+## 2026-07-26 — Reporting-Standard verschärft (Pflichtmetriken + Settings)
+
+- `scripts/llm_migration_benchmark.py` erweitert:
+  - automatischer HTML-embedded Markdown-Report (`docs/project/benchmark_report.md`)
+  - Model-Summary mit `Overall`, `Suitability`, `Wall-s(total)`
+  - zusätzliche Min/Max-Metriken: `RAM%(min/max)`, `GPU%(min/max)`, `VRAM MB(min/max)`
+  - vollständige Raw-Metriken pro Testfall inkl. `forbidden_hits`
+  - Ausgabe der effektiven llama.cpp-Kampagnen-Settings aus `scripts/run_local_campaign.ps1`
+- `AGENTS.md` Abschnitt 7.1 ergänzt: verbindliche Liste aller Pflichtmetriken und Reproduzierbarkeits-Settings.
+
 ## 2026-07-29
 
 - `AGENTS.md` komplett neu geschrieben als lebendes Projektgedächtnis:

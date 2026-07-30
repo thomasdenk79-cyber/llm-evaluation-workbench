@@ -1,0 +1,3 @@
+default_ai_chat_logging: transcript
+transcript_secret_handling: redact
+chat_language: German

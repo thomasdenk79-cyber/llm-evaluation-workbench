@@ -1,0 +1,67 @@
+{
+  "method": "Manual intent-level review by the architecture agent",
+  "reason": "The V1 lexical checks produced false negatives for translations, Unicode hyphens, equivalent wording, and slash direction.",
+  "weight_total": 38,
+  "models": [
+    {
+      "model": "qwen-3.6-27b",
+      "intent_passes_after_v2": 14,
+      "case_count": 14,
+      "weighted_intent_score": 100.0,
+      "remaining_failed_cases": []
+    },
+    {
+      "model": "ministral-3-14b-instruct-2512",
+      "intent_passes_after_v2": 14,
+      "case_count": 14,
+      "weighted_intent_score": 100.0,
+      "remaining_failed_cases": []
+    },
+    {
+      "model": "gpt-oss-120b",
+      "intent_passes_after_v2": 13,
+      "case_count": 14,
+      "weighted_intent_score": 94.74,
+      "remaining_failed_cases": [
+        {
+          "case_id": "agent-memory-summary",
+          "reason": "Misread the matching READ-WHEN triggers and withheld fixture content that the question made relevant."
+        }
+      ]
+    },
+    {
+      "model": "deepseek-v4-flash",
+      "intent_passes_after_v2": 13,
+      "case_count": 14,
+      "weighted_intent_score": 92.11,
+      "remaining_failed_cases": [
+        {
+          "case_id": "concepts",
+          "reason": "Omitted W-question documentation, concise communication, and explicit best-practice owner control."
+        }
+      ]
+    },
+    {
+      "model": "Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+      "intent_passes_after_v2": 13,
+      "case_count": 14,
+      "weighted_intent_score": 92.11,
+      "remaining_failed_cases": [
+        {
+          "case_id": "concepts",
+          "reason": "Returned generic category labels instead of the requested governing concepts."
+        }
+      ]
+    }
+  ],
+  "v2_chat_naming_retest": {
+    "change": "Added six exact normalization rules and one worked example to the synthetic fixture.",
+    "scores": {
+      "deepseek-v4-flash": 100.0,
+      "gpt-oss-120b": 100.0,
+      "qwen-3.6-27b": 100.0,
+      "Mistral-Small-24B-Instruct-2501-FP8-dynamic": 100.0,
+      "ministral-3-14b-instruct-2512": 100.0
+    }
+  }
+}

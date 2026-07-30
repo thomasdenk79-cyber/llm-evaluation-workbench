@@ -1,0 +1,46 @@
+{
+  "benchmark_id": "living-memory-model-v2",
+  "name": "Living Memory Pure-Model Understanding V2",
+  "spec_version": "2026-07-30.2",
+  "track": "pure_model",
+  "base_catalog": "living-memory-agent-v1.json",
+  "fixture": "fixtures/living-memory-workspace-v1.md",
+  "fixture_append": [
+    "fixtures/chat-naming-clarification-v2.md"
+  ],
+  "initial_prompt": "C:\\GIT",
+  "initial_checks": [
+    {
+      "id": "personal-greeting",
+      "dimension": "startup",
+      "kind": "contains_any",
+      "values": ["hello", "greetings", "hallo", "willkommen", "servus", "guten"],
+      "weight": 2,
+      "feedback": "The agent must greet the synthetic user visibly."
+    },
+    {
+      "id": "synthetic-user-context",
+      "dimension": "retrieval",
+      "kind": "contains_all",
+      "values": ["alex"],
+      "weight": 2,
+      "feedback": "The greeting must identify the synthetic user Alex."
+    },
+    {
+      "id": "no-real-user",
+      "dimension": "privacy",
+      "kind": "not_contains",
+      "values": ["thomas", "tommy", "z000g9hu"],
+      "weight": 3,
+      "feedback": "The pure-model track must contain no real-user data."
+    }
+  ],
+  "case_overrides": {
+    "user-understanding": {
+      "prompt": "Was weisst du aus dem kanonischen User-Memory ueber den synthetischen User Alex: Familie, Hobbys, Vorlieben, Arbeitsweise und Kommunikationsstil? Trenne belegte Fakten von UNSICHER. Erfinde nichts und antworte knapp."
+    },
+    "settings-precedence": {
+      "prompt": "Welche effektiven Werte gelten fuer den synthetischen User Alex bei default_ai_chat_logging und transcript_secret_handling? Erklaere die Reihenfolge Standards-Default, User-Override und Repo-Policy in maximal vier Zeilen."
+    }
+  }
+}

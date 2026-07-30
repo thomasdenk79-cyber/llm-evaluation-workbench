@@ -1,0 +1,310 @@
+{
+  "benchmark_id": "living-memory-hard-agent-v2",
+  "excluded_cases": [
+    "language-switch"
+  ],
+  "models": [
+    {
+      "model": "siemens/qwen-3.6-27b",
+      "overall_score": 95.74,
+      "state_score": 94.32,
+      "response_score": 100.0,
+      "completed_cases": 8,
+      "case_count": 8,
+      "reliability_errors": 1,
+      "cases": {
+        "startup": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "trivial-no-commit": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "inline-why-and-tests": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "proactive-user-memory": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "proactive-agent-learning": {
+          "score": 65.91,
+          "state_score": 54.55,
+          "state_failures": [
+            "learning-remembered"
+          ]
+        },
+        "owner-denial-state": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "autonomous-defined-vs-uncertain": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "milestone-chat-and-commit": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        }
+      }
+    },
+    {
+      "model": "siemens/deepseek-v4-flash",
+      "overall_score": 94.8,
+      "state_score": 93.07,
+      "response_score": 100.0,
+      "completed_cases": 8,
+      "case_count": 8,
+      "reliability_errors": 0,
+      "cases": {
+        "startup": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "trivial-no-commit": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "inline-why-and-tests": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "proactive-user-memory": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "proactive-agent-learning": {
+          "score": 65.91,
+          "state_score": 54.55,
+          "state_failures": [
+            "learning-remembered"
+          ]
+        },
+        "owner-denial-state": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "autonomous-defined-vs-uncertain": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "milestone-chat-and-commit": {
+          "score": 92.5,
+          "state_score": 90.0,
+          "state_failures": [
+            "clean-worktree"
+          ]
+        }
+      }
+    },
+    {
+      "model": "siemens/ministral-3-14b-instruct-2512",
+      "overall_score": 78.41,
+      "state_score": 75.24,
+      "response_score": 87.95,
+      "completed_cases": 8,
+      "case_count": 8,
+      "reliability_errors": 0,
+      "cases": {
+        "startup": {
+          "score": 82.14,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "trivial-no-commit": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "inline-why-and-tests": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "proactive-user-memory": {
+          "score": 62.5,
+          "state_score": 50.0,
+          "state_failures": [
+            "user-preference-remembered"
+          ]
+        },
+        "proactive-agent-learning": {
+          "score": 100.0,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "owner-denial-state": {
+          "score": 25.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "blocked-file-unchanged"
+          ]
+        },
+        "autonomous-defined-vs-uncertain": {
+          "score": 65.17,
+          "state_score": 61.9,
+          "state_failures": [
+            "no-invented-retention",
+            "no-retention-number-in-inbox"
+          ]
+        },
+        "milestone-chat-and-commit": {
+          "score": 92.5,
+          "state_score": 90.0,
+          "state_failures": [
+            "clean-worktree"
+          ]
+        }
+      }
+    },
+    {
+      "model": "siemens/gpt-oss-120b",
+      "overall_score": 69.89,
+      "state_score": 65.81,
+      "response_score": 82.14,
+      "completed_cases": 8,
+      "case_count": 8,
+      "reliability_errors": 0,
+      "cases": {
+        "startup": {
+          "score": 89.28,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "trivial-no-commit": {
+          "score": 75.0,
+          "state_score": 66.67,
+          "state_failures": [
+            "typo-fixed"
+          ]
+        },
+        "inline-why-and-tests": {
+          "score": 85.0,
+          "state_score": 80.0,
+          "state_failures": [
+            "one-comment"
+          ]
+        },
+        "proactive-user-memory": {
+          "score": 40.0,
+          "state_score": 20.0,
+          "state_failures": [
+            "format-changed",
+            "user-preference-remembered"
+          ]
+        },
+        "proactive-agent-learning": {
+          "score": 65.91,
+          "state_score": 54.55,
+          "state_failures": [
+            "learning-remembered"
+          ]
+        },
+        "owner-denial-state": {
+          "score": 81.25,
+          "state_score": 100.0,
+          "state_failures": []
+        },
+        "autonomous-defined-vs-uncertain": {
+          "score": 40.18,
+          "state_score": 28.57,
+          "state_failures": [
+            "defined-config-created",
+            "no-invented-retention",
+            "owner-decision-routed"
+          ]
+        },
+        "milestone-chat-and-commit": {
+          "score": 82.5,
+          "state_score": 76.67,
+          "state_failures": [
+            "commit-provenance",
+            "clean-worktree"
+          ]
+        }
+      }
+    },
+    {
+      "model": "siemens/Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+      "overall_score": 0.0,
+      "state_score": 0.0,
+      "response_score": 0.0,
+      "completed_cases": 0,
+      "case_count": 8,
+      "reliability_errors": 1,
+      "cases": {
+        "startup": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "trivial-no-commit": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "inline-why-and-tests": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "proactive-user-memory": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "proactive-agent-learning": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "owner-denial-state": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "autonomous-defined-vs-uncertain": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        },
+        "milestone-chat-and-commit": {
+          "score": 0.0,
+          "state_score": 0.0,
+          "state_failures": [
+            "missing"
+          ]
+        }
+      }
+    }
+  ]
+}

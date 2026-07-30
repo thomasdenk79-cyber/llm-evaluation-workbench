@@ -1,0 +1,5 @@
+user-memory/why/conversations/*.json
+.verification/
+__pycache__/
+tests/__pycache__/
+src/__pycache__/

@@ -1,0 +1,3 @@
+default_ai_chat_logging: summary
+transcript_secret_handling: redact
+user_chat_lang: en

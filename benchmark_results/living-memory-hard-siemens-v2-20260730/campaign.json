@@ -1,0 +1,29 @@
+{
+  "campaign_id": "living-memory-hard-siemens-v2-20260730",
+  "benchmark": "living-memory-hard-agent-v2",
+  "track": "synthetic_tool_agent",
+  "models": [
+    "siemens/ministral-3-14b-instruct-2512",
+    "siemens/gpt-oss-120b",
+    "siemens/qwen-3.6-27b",
+    "siemens/Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+    "siemens/deepseek-v4-flash"
+  ],
+  "scoring": {
+    "response_weight": 0.25,
+    "state_weight": 0.75,
+    "valid_main_cases": 8,
+    "excluded_main_cases": [
+      "language-switch"
+    ],
+    "language_retest": "canonical user_chat_lang V3"
+  },
+  "artifacts": {
+    "raw": "raw-results.jsonl",
+    "adjudicated": "adjudicated-results.jsonl",
+    "summary": "summary.json",
+    "language": "language-v3-results.jsonl",
+    "evaluation": "evaluation.md",
+    "resume": "resume.md"
+  }
+}

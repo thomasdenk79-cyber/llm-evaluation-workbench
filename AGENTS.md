@@ -35,6 +35,12 @@
     `benchmark_results\living-memory-hard-siemens-v2-20260730\evaluation.md`.
   - Synthetische Hard-Workspace-Fixtures verwenden die gemeinsame hierarchische
     `settings.yml`-Benennung; Scoring-Tests und JSON-Validierung bestanden.
+  - OpenCode listet alle lokalen Modelle getrennt nach Backend: 29 Ollama-Tags und sechs
+    vollständige llama.cpp-GGUF-Sätze. Ollama und der persistente llama.cpp-Router laden das
+    ausgewählte Modell nativ bei der ersten Anfrage; unvollständige/Cloud-Modelle bleiben aus.
+  - Alle lokalen Modellkonfigurationen verwenden ihren höchsten deklarierten Kontext; explizit
+    größere Sonderwerte bleiben erhalten. Flash Attention plus Q4-KV-Cache begrenzen den
+    Speicherbedarf. Qwen 3.6 35B A3B Q4 erreicht bei 262144 Kontext rund 29,7 Token/s.
 
 - Agent: opencode | llm: qwen-3.6-27b | role: benchmark orchestration (gestoppt)
 - **Aktivierter P1-Fix (2026-07-29):**

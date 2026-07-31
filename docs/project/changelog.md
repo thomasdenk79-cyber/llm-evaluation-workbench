@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-07-31 — Alle lokalen Modelle in OpenCode
+
+- OpenCode-Modellkonfiguration aus der laufenden Ollama-Registry und vollständigen
+  llama.cpp-GGUF-Sätzen reproduzierbar erzeugt.
+- Ollama und llama.cpp als getrennte Provider mit eindeutigen Modell-IDs registriert.
+- Nicht-lokale Ollama-Cloud-Tags und unvollständige GGUF-Shards ausgeschlossen.
+- llama.cpp-Router mit nativem Auto-Load, maximal einem gleichzeitig geladenen Modell und
+  Benutzer-Autostart eingerichtet.
+- Native Maximalkontexte für alle lokalen Ollama- und GGUF-Modelle persistent konfiguriert;
+  vorhandene größere Sonderkontexte bleiben erhalten.
+- GGUF-Presets auf Flash Attention und Q4-KV-Cache eingestellt.
+- Vorhandene Provider und Zugangsdaten beim Konfigurationsupdate unverändert bewahrt.
+
 ## 2026-07-30 — Living-memory-Verstaendnisbenchmark
 
 - Tool-Agent-Katalog mit Startup-Navigation, Chatablage, WHY-Referenzen,

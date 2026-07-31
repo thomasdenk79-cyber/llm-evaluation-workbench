@@ -138,6 +138,20 @@ Sie sind NICHT in OneDrive gesichert (zu groß). Bei Neuinstallation von Hugging
 & "C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe" --version
 ```
 
+### 2d. OpenCode-Modellpicker und Auto-Load
+
+```powershell
+cd C:\GIT\llm-evaluation-workbench
+powershell -ExecutionPolicy Bypass -File .\scripts\install_llama_router_startup.ps1 -StartNow
+```
+
+Das Script übernimmt alle lokal installierten Ollama-Tags und alle vollständigen GGUF-Sätze
+in getrennte OpenCode-Provider. Ollama und der llama.cpp-Router laden das im Picker gewählte
+Modell erst bei der ersten Anfrage. Der Router startet künftig über den Benutzer-Autostart und
+hält maximal ein GGUF-Modell gleichzeitig geladen. Für jedes Modell wird dessen höchster
+deklarierter Kontext persistent gesetzt; Flash Attention und Q4-KV-Cache begrenzen den
+zusätzlichen Speicherbedarf.
+
 ---
 
 ## 3. Siemens LLM (Cloud, über api.siemens.com)
@@ -295,6 +309,7 @@ Ollama und llama.cpp müssen manuell installiert werden (zu groß für Autoinsta
 [ ] Ollama Modelle heruntergeladen (mindestens qwen3-coder:30b + gpt-oss:20b)
 [ ] llama.cpp Binaries nach C:\Users\...\llama.cpp\bin\ kopiert/entpackt
 [ ] GGUF-Modelle nach C:\Users\...\llama.cpp\models\ kopiert/heruntergeladen
+[ ] OpenCode-Modelle synchronisiert und llama.cpp-Router-Autostart eingerichtet
 [ ] Siemens Token in code.siemens.com_api_ai_token.txt vorhanden (OneDrive)
 [ ] configure_siemens_llm.ps1 ausgeführt
 [ ] pip install -r requirements.txt (im Benchmark-Repo)

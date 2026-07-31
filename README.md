@@ -18,6 +18,10 @@ Zentrale Sammlung und strukturierte Ausfuehrungsbasis fuer lokale LLM-Benchmarks
   Zusaetzliche Metrik-Sammler aus Altbestand
 - `scripts/run_benchmark_campaign.ps1`  
   Wrapper fuer komplette Kampagnen inkl. Power-Profil-Steuerung
+- `scripts/sync_opencode_local_models.py`
+  Synchronisiert installierte Ollama- und llama.cpp-Modelle als getrennte OpenCode-Provider
+- `scripts/configure_ollama_max_context.py`
+  Setzt für jedes lokale Ollama-Modell persistent den höchsten deklarierten Kontext
 - `data/benchmark_results_legacy/`  
   Bereits vorhandene historische Benchmark-Ergebnisse
 - `docs/operations/runbook.md`  
@@ -37,7 +41,20 @@ pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 -Backend ollama
 ```
 
-3) Gemischte Kampagne (Ollama + llama.cpp):
+3) Alle lokalen Modelle in OpenCode bereitstellen:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_llama_router_startup.ps1 -StartNow
+```
+
+Ollama lädt das ausgewählte Modell bei der ersten Anfrage. Der llama.cpp-Router arbeitet
+genauso und hält höchstens ein GGUF-Modell gleichzeitig geladen. Eine laufende OpenCode-Sitzung
+nach der Synchronisation neu starten, damit der Model-Picker die neuen Einträge übernimmt.
+Nach neu hinzugefügten GGUF-Dateien den Installer mit `-StartNow -Restart` erneut ausführen.
+Der Installer setzt außerdem jedes erreichbare Ollama-Modell und jedes GGUF-Preset auf dessen
+jeweiligen maximal deklarierten Kontext.
+
+4) Gemischte Kampagne (Ollama + llama.cpp):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 `

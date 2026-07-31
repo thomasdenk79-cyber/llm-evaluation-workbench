@@ -72,7 +72,7 @@ def main() -> int:
                 title=f"language-v3-{model_slug(model)}",
                 require_response=False,
             )
-            settings = workspace / "user-memory" / "alex" / "user-settings.yml"
+            settings = workspace / "user-memory" / "alex" / "settings.yml"
             content = settings.read_text(encoding="utf-8")
             settings.write_text(
                 content.replace("user_chat_lang: de", "user_chat_lang: en"),

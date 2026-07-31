@@ -10,7 +10,7 @@
 
 ## Aktueller Stand
 
-### Stand: 2026-07-30
+### Stand: 2026-07-31
 
 - Living-memory-Verstaendnisbenchmark implementiert:
   - Tool-Agent-Track navigiert den echten Workspace ueber OpenCode.
@@ -33,6 +33,8 @@
     User-Memory. Ministral verletzte `AI-ACCESS: denied`.
   - Hard-Bericht:
     `benchmark_results\living-memory-hard-siemens-v2-20260730\evaluation.md`.
+  - Synthetische Hard-Workspace-Fixtures verwenden die gemeinsame hierarchische
+    `settings.yml`-Benennung; Scoring-Tests und JSON-Validierung bestanden.
 
 - Agent: opencode | llm: qwen-3.6-27b | role: benchmark orchestration (gestoppt)
 - **Aktivierter P1-Fix (2026-07-29):**

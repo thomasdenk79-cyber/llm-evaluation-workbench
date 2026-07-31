@@ -5,7 +5,7 @@
 
 ## Startup
 
-Read `user-memory\profile.md`, `user-memory\alex\user-settings.yml`,
+Read `standards\settings.yml`, `user-memory\profile.md`, `user-memory\alex\settings.yml`,
 `agent-memory\INDEX.md`, and the active repository router. Greet Alex briefly in
 the effective `chat_language`.
 

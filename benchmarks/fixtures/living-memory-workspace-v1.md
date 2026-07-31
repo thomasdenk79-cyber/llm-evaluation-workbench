@@ -23,12 +23,12 @@ virtual workspace. Do not claim that you accessed a real filesystem.
 - Before session end persist technical state and next action, route durable memory,
   record validation and known errors, and commit/push only according to policy.
 
-## C:\GIT\standards\workspace-settings.yml
+## C:\GIT\standards\settings.yml
 
 default_ai_chat_logging: summary
 transcript_secret_handling: redact
 
-## C:\GIT\user-memory\alex\user-settings.yml
+## C:\GIT\user-memory\alex\settings.yml
 
 default_ai_chat_logging: transcript
 transcript_secret_handling: redact

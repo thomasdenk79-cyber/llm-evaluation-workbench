@@ -313,7 +313,7 @@
       "pre_actions": [
         {
           "kind": "replace_text",
-          "path": "user-memory/alex/user-settings.yml",
+          "path": "user-memory/alex/settings.yml",
           "old": "chat_language: German",
           "new": "chat_language: English"
         }

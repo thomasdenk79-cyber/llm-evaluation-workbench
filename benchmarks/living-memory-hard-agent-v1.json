@@ -289,7 +289,7 @@
       "pre_actions": [
         {
           "kind": "replace_text",
-          "path": "user-memory/alex/user-settings.yml",
+          "path": "user-memory/alex/settings.yml",
           "old": "chat_language: German",
           "new": "chat_language: English"
         }
@@ -325,7 +325,7 @@
         {
           "id": "english-setting-present",
           "kind": "file_contains_all",
-          "path": "user-memory/alex/user-settings.yml",
+          "path": "user-memory/alex/settings.yml",
           "values": ["chat_language: English"],
           "weight": 2,
           "feedback": "Use the effective changed setting."

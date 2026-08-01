@@ -306,6 +306,32 @@ Fortsetzen); Retries (`--max-retries`, Default `0`) gelten ausschließlich
 für einen transienten `status=error`, nie für Timeout oder eine
 inhaltlich abgelehnte Probe.
 
+**Serial-Pilot-Crash-Fix (§18 in `agent_helper_benchmark.md`):** ein
+realer Pilot (`agent-helper-serial-pilot-20260801`, `qwen3-coder:30b`)
+stürzte während des Mini-Gates ab, weil dessen Arbeitsverzeichnis
+(`mini_task_work/<voller sample_id>`) 226 Zeichen lang war und
+`subprocess.run(cwd=...)` unter Windows `NotADirectoryError: [WinError
+267]` warf — **ohne** persistierte Probe oder Checkpoint. Behoben durch:
+ein kurzes, gehashtes Arbeitsverzeichnis (`_short_work_dir_name()`, 16 Hex-
+Zeichen, unabhängig von der Länge von Kampagne/Modell/Task-IDs); ein
+Gate-Boundary-Exception-Sicherheitsnetz in beiden echten Gates (jede
+unerwartete Exception nach dem echten HTTP-Aufruf wird jetzt immer als
+`status=error`/`acceptance_status=not_usable`-Probe persistiert statt die
+Session abstürzen zu lassen — neues `--halt-on-gate-exception`-Flag
+steuert, ob die Kampagne danach trotzdem weiterläuft [Standard] oder
+stoppt); und ein Checkpoint **vor** jedem Gate-Aufruf (zusätzlich zum
+bestehenden Checkpoint danach), damit ein Absturz/Ctrl-C immer einen
+wiederaufnehmbaren Zustand hinterlässt. Genauer Wiederaufnahme-Befehl für
+exakt diesen realen Piloten (Connect-Gate für `qwen3-coder:30b` bereits
+akzeptiert und wird übersprungen; nur dessen fehlendes Mini-Gate plus die
+drei noch nie versuchten Modelle laufen):
+
+```powershell
+python .\run_agent_helper_campaign.py serial-execute `
+  --campaign-id agent-helper-serial-pilot-20260801 --confirm `
+  --models "qwen3-coder:30b,deepseek-coder-v2:16b,phi4-mini:3.8b-q4_K_M,rnj-1:8b"
+```
+
 **Kombinierten Bericht neu bauen** (liest nur bereits vorhandene Kampagnen-Datenbanken):
 
 ```powershell

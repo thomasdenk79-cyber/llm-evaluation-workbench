@@ -343,11 +343,32 @@ class SerialCampaignResult:
 
 def _write_checkpoint(path: Path, payload: dict) -> None:
     """Atomic write-then-rename so a killed process never leaves a
-    half-written, corrupt checkpoint behind."""
+    half-written, corrupt checkpoint behind.
+
+    ``os.replace`` normally completes instantly, but on Windows it can
+    transiently raise ``PermissionError: [WinError 5]`` ("Access is
+    denied") if antivirus/indexing briefly holds a handle open on the
+    just-written temp file or the destination -- observed in practice
+    under this harness's own test suite once pre-gate checkpointing made
+    writes to the same path more frequent. A short bounded retry-with-
+    backoff absorbs this without weakening the atomicity guarantee: the
+    rename itself is still a single atomic syscall, only the decision to
+    retry a failed attempt is new.
+    """
 
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp_path, path)
+    last_exc: Optional[OSError] = None
+    for attempt in range(6):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except OSError as exc:
+            last_exc = exc
+            if attempt < 5:
+                time.sleep(0.02 * (attempt + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def _existing_sample_for(

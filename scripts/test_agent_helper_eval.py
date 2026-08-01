@@ -4274,6 +4274,31 @@ class SerialCampaignExecutionTests(unittest.TestCase):
         discovery = _discovery_with_tags(*[(tag, 1.0, "dense", "q4", False) for tag in tags])
         return serial_campaign.build_serial_plan(discovery, "camp", generated_at="t", models=list(tags))
 
+    def test_checkpoint_retries_transient_windows_replace_failure(self) -> None:
+        root = self._fresh_root()
+        path = root / "progress.json"
+        real_replace = serial_campaign.os.replace
+        attempts = 0
+
+        def flaky_replace(source, destination):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError(5, "Access is denied")
+            return real_replace(source, destination)
+
+        with mock.patch.object(
+            serial_campaign.os, "replace", side_effect=flaky_replace
+        ), mock.patch.object(serial_campaign.time, "sleep") as sleep:
+            serial_campaign._write_checkpoint(path, {"state": "ready"})
+
+        self.assertEqual(attempts, 2)
+        sleep.assert_called_once_with(0.02)
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8")),
+            {"state": "ready"},
+        )
+
     def test_confirm_false_never_calls_gates_and_returns_not_executed(self) -> None:
         root = self._fresh_root()
         plan = self._plan(root, "a:1b")

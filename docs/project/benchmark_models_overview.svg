@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1220" height="164" viewBox="0 0 1220 164">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8fbff"/><stop offset="100%" stop-color="#eef4ff"/></linearGradient></defs>
+<rect x="0" y="0" width="1220" height="100%" fill="url(#bg)"/>
+<rect x="8" y="8" width="1204" height="48" rx="8" fill="#ffffff" stroke="#dbeafe"/>
+<text x="18" y="30" font-family="Segoe UI, Arial" font-size="18" font-weight="600" fill="#0f172a">Benchmark model overview</text>
+<text x="18" y="47" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Benchmark: ora-pg-py-33 | Updated: 2026-07-29 08:55:54</text>
+<text x="540" y="78" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Heuristik-Score (0-100)</text>
+<text x="848" y="78" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Runtime avg (s)</text>
+<rect x="12" y="85" width="1196" height="28" rx="6" fill="#ffffff" stroke="#e5e7eb"/>
+<text x="18" y="103" font-family="Consolas, monospace" font-size="11" fill="#1f2937">ora-pg-py-33 | ollama | qwen3.6:27b-q4_K_M</text>
+<rect x="540" y="94" width="185.6" height="12" fill="#2563eb"/>
+<text x="796" y="103" font-family="Consolas, monospace" font-size="11" fill="#0f172a"> 74.2</text>
+<rect x="848" y="94" width="260.0" height="12" fill="#f59e0b"/>
+<text x="1114" y="103" font-family="Consolas, monospace" font-size="11" fill="#0f172a">  33.10s</text>
+</svg>

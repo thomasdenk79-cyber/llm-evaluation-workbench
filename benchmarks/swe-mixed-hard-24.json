@@ -1,0 +1,162 @@
+{
+  "benchmark_id": "swe-mixed-hard-24",
+  "name": "swe-mixed-hard-24",
+  "spec_version": "2026-07-26",
+  "scoring_profile": {
+    "mode": "swe_lite",
+    "pass_threshold": 85.0
+  },
+  "tasks": [
+    {
+      "id": "mixed_hotfix_sql",
+      "title": "Production hotfix SQL patch",
+      "prompt": "Return PostgreSQL SQL patch only. Incident: duplicate invoices after retry storms. Add unique protection, deduplicate existing rows keeping newest by updated_at, and keep service online (no full table lock).",
+      "required_keywords": [
+        "create unique index",
+        "concurrently",
+        "delete from",
+        "using",
+        "row_number()",
+        "partition by",
+        "order by",
+        "updated_at"
+      ],
+      "forbidden_keywords": [
+        "lock table",
+        "truncate",
+        "exception when others then null"
+      ]
+    },
+    {
+      "id": "mixed_hotfix_python",
+      "title": "Retry storm Python hotfix",
+      "prompt": "Return Python code only. Patch a worker to prevent duplicate processing by introducing idempotency key checks + transactional lock handling + metrics increments for dedup hits.",
+      "required_keywords": [
+        "idempotency",
+        "transaction",
+        "lock",
+        "metrics",
+        "duplicate",
+        "return",
+        "def "
+      ],
+      "forbidden_keywords": [
+        "except: pass",
+        "global ",
+        "print("
+      ]
+    },
+    {
+      "id": "mixed_plpgsql_state_machine",
+      "title": "PL/pgSQL state transition guard",
+      "prompt": "Return PostgreSQL SQL only. Implement function enforce_order_state_transition(old_state text, new_state text) raising exception for invalid transitions; valid transitions: NEW->PAID|CANCELLED, PAID->SHIPPED|REFUNDED, SHIPPED->REFUNDED.",
+      "required_keywords": [
+        "create or replace function",
+        "language plpgsql",
+        "raise exception",
+        "case",
+        "when",
+        "return",
+        "boolean"
+      ],
+      "forbidden_keywords": [
+        "exception when others then null",
+        "decode(",
+        "nvl("
+      ]
+    },
+    {
+      "id": "mixed_data_repair_plan",
+      "title": "Data repair SQL with dry-run mode",
+      "prompt": "Return PostgreSQL SQL only. Build repair script for negative inventory values with dry-run and apply modes. In dry-run output affected rows; in apply mode fix and write audit entries.",
+      "required_keywords": [
+        "with",
+        "select",
+        "update inventory",
+        "where qty < 0",
+        "audit",
+        "insert into",
+        "case"
+      ],
+      "forbidden_keywords": [
+        "truncate",
+        "delete from inventory",
+        "exception when others then null"
+      ]
+    },
+    {
+      "id": "mixed_schema_contract_test",
+      "title": "Python schema contract test generator",
+      "prompt": "Return Python code only. Create function generate_contract_tests(schema: dict) -> str that emits pytest tests validating not-null, type compatibility, and default value contracts between source and target schema.",
+      "required_keywords": [
+        "def generate_contract_tests",
+        "pytest",
+        "not null",
+        "default",
+        "assert",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "except: pass",
+        "eval("
+      ]
+    },
+    {
+      "id": "mixed_observability_pack",
+      "title": "Migration observability SQL pack",
+      "prompt": "Return PostgreSQL SQL only. Create views for migration lag, error rates, and throughput per table from migration_events table. Include 1m and 15m rolling windows.",
+      "required_keywords": [
+        "create view",
+        "migration_events",
+        "date_trunc",
+        "interval '1 minute'",
+        "interval '15 minute'",
+        "count(",
+        "group by"
+      ],
+      "forbidden_keywords": [
+        "materialized view log",
+        "rownum",
+        "decode("
+      ]
+    },
+    {
+      "id": "mixed_backpressure_control",
+      "title": "Python backpressure controller",
+      "prompt": "Return Python code only. Implement adaptive concurrency controller that lowers workers when p95 latency or error rate exceeds thresholds and raises workers when stable.",
+      "required_keywords": [
+        "p95",
+        "error_rate",
+        "concurrency",
+        "min(",
+        "max(",
+        "if",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "while True",
+        "except: pass",
+        "time.sleep(0)"
+      ]
+    },
+    {
+      "id": "mixed_release_guard",
+      "title": "Release guard SQL gate",
+      "prompt": "Return PostgreSQL SQL only. Create a release_gate function that fails deployment when unresolved migration errors > 0 in last 30 minutes or rowcount drift exceeds threshold.",
+      "required_keywords": [
+        "create or replace function",
+        "returns boolean",
+        "last 30 minutes",
+        "count(",
+        "where",
+        "raise exception",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "exception when others then null",
+        "dbms_",
+        "rownum"
+      ]
+    }
+  ]
+}

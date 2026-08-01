@@ -1,0 +1,25 @@
+{
+  "_comment": "EXAMPLE ONLY. Demonstrates the documented, stable agent-helper-catalog-v1 contract that an externally authored benchmark-set file must follow so scripts/agent_helper_eval/catalog.py can load and validate it with ZERO code changes. See docs/project/agent_helper_benchmark.md (Coordination / multi-agent contribution workflow) before adding a real external catalog file. Copy this file, rename it (never edit an existing shared catalog file in place), fill in a real catalog_metadata block, and add real tasks.",
+  "catalog_schema_version": "agent-helper-catalog-v1",
+  "catalog_metadata": {
+    "catalog_id": "example-external-catalog-v1",
+    "author": "command-center-session (placeholder example -- replace with the real contributing session/author)",
+    "created_at": "2026-08-01T00:00:00.000+00:00",
+    "source_notes": "Illustrative only; not evaluated by any campaign. Demonstrates the minimum shape another agent/session must produce to add a new benchmark-set file without any change to catalog.py."
+  },
+  "tasks": [
+    {
+      "task_id": "example-external-smoke-v1",
+      "name": "Example externally authored connect/format smoke check",
+      "category": "connectivity",
+      "tracks": ["pure_model", "tool_agent"],
+      "gates": ["smoke"],
+      "description": "Placeholder task demonstrating that a new task_id defined entirely in this external file loads without any change to catalog.py, as long as it matches the TaskSpec field names.",
+      "deterministic_check_description": "Response is non-empty and matches the expected literal.",
+      "reviewer_rubric_hint": null,
+      "max_turns": 1,
+      "timeout_seconds": 60,
+      "requires_local_lock": true
+    }
+  ]
+}

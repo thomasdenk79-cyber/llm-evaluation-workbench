@@ -10,6 +10,446 @@
 
 ## Aktueller Stand
 
+### Stand: 2026-08-03 — Agent-Helper-Evaluation-Track: Ollama-Inventar-Discovery + serieller Gate-Runner (kein Live-Modell)
+
+- Zwei neue Module, beide reine Discovery-/Orchestrierungslogik ohne
+  jeden Modell-/API-Aufruf durch diese Session:
+  `scripts\agent_helper_eval\ollama_inventory.py` (Discovery installierter
+  Ollama-Tags ausschließlich über `GET /api/tags` + `POST /api/show` — nie
+  `/api/generate`, lädt/generiert also nie ein Modell; Architektur-
+  Klassifikation MoE/dense nur bei echter Evidenz, sonst `"unknown"`;
+  Cloud-Tag-Erkennung über Ollamas eigene Namenskonvention; generierter
+  JSON-Snapshot wird **in das jeweilige Kampagnen-Ausgabeverzeichnis**
+  geschrieben, die handkuratierte
+  `benchmarks\agent-helper-model-inventory.example.json` bleibt
+  unverändert; VRAM-Passungs-Projektion immer `confidence="estimated"`)
+  und `scripts\agent_helper_eval\serial_campaign.py` (`build_serial_plan()`
+  — explizite Modellliste oder Filter-Modus, jedes entdeckte Modell
+  erscheint immer transparent in `included` oder `deferred` mit Grund,
+  nie stillschweigend übergangen; `run_serial_campaign()` — strikt
+  sequenzielle Connect→Mini-Gate-Ausführung pro Modell mit Resume
+  [überspringt jedes bereits persistierte (Modell, Task)-Paar, auch
+  Fehlschlag/Timeout], engem Retry [nur transientes `status=error`],
+  Cooldown, atomarem JSON-Checkpoint nach jedem Schritt, Preflight-Lock-
+  Verweigerung stoppt standardmäßig die ganze Serie).
+- Drei neue CLI-Subcommands in `run_agent_helper_campaign.py`:
+  `ollama-inventory-snapshot` (real, read-only), `serial-plan` (immer
+  trocken), `serial-execute` (erfordert `--confirm` **und** eine explizite
+  `--models`-Liste oder mindestens ein Filter-Flag — ein versehentliches
+  Ausführen aller entdeckten Modelle ist durch das CLI-Design
+  ausgeschlossen).
+- 40 neue, schnelle, deterministische Regressionstests (gemockte
+  Discovery-Transports, gemockte Gate-Funktionen, ein echter End-to-End-
+  Test durch die reale `live_gates`-Verdrahtung mit Fake-Transports, CLI-
+  Wiring-Tests mit auf ein Temp-Verzeichnis gepatchtem `campaign_cli.ROOT`
+  damit das reale Repository nie berührt wird). **263/263 Tests bestehen**
+  (vorher 223). Kein Commit/Push; keine Abhängigkeiten installiert; kein
+  Live-Modell-, Live-Ollama-Discovery- oder Netzwerkaufruf in diesem
+  Zyklus; keine Command-Center-Repositories berührt.
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  §17, `docs\operations\runbook.md` §8, `docs\project\changelog.md`
+  (Eintrag "Ollama-Inventar-Discovery + serieller Gate-Runner").
+
+### Stand: 2026-08-02 — Agent-Helper-Evaluation-Track: Pilot-Review-Remediation (3 Fixes, kein Live-Modell)
+
+- Ein Pilot-Reviewer führte den echten CLI-Connect-/Mini-Gate gegen
+  `qwen3-coder:30b` aus (Kampagne `agent-helper-pilot-20260801`) und meldete
+  drei materielle Mängel. Alle drei wurden **ausschließlich als Schema-/
+  Logik-/Datenkorrektur** behoben — in diesem Zyklus wurde kein Modell/keine
+  API erneut aufgerufen; die bereits persistierte Pilot-Kampagne wurde aus
+  bereits erfassten Daten repariert.
+- **Fix 1 (Evidenz-Stufen/Tiering-Überschätzung):** `qwen3-coder` wurde nach
+  nur Smoke-/Mini-Evidenz ohne Reviewer-/Kollaborations-Abdeckung fälschlich
+  als `tier-1-recommended` gelabelt. Neu: explizites `evidence_stage`
+  (`gate_only`/`partial_suite`/`full_suite`) pro Aggregat-Gruppe
+  (`rubric.evidence_stage()`), neue Tier-Stufe `gate-passed-provisional`,
+  die `rubric.suitability_tier()` erzwingt sobald `evidence_stage !=
+  full_suite` — unabhängig vom Score. `schema.validate_aggregate()`
+  verbietet die Kombination `evidence_stage != full_suite` +
+  `tier-1-recommended` als hartes Schema-Invariant. Report-Leaderboard und
+  Executive Summary (DE/EN) machen "Gate bestanden ≠ Eignungsurteil"
+  jetzt explizit.
+- **Fix 2 (Phasenzuordnung):** `live_gates.py` schrieb den kalten
+  Modell-Ladezeit-Wert (`load_duration`) fälschlich in `llm_queue_seconds`,
+  wodurch ~50 % der Mini-Gate-Wandzeit als "Queue/Idle" statt als LLM/API
+  ausgewiesen wurde. Jetzt: `llm_request_seconds` = gemessene
+  Client-Wandzeit des ganzen Ollama-Calls (gesamter Call = LLM/API-
+  Critical-Path), `llm_queue_seconds = None` (Fail-fast-Preflight-Lock
+  wartet nie real), neues additive Feld `model_load_seconds` als reines
+  Diagnose-Subfeld (bereits in `llm_request_seconds` enthalten, nie
+  doppelt gezählt).
+- **Fix 3 (`cpu_time_seconds` immer N/A):** Neue, explizit benannte Felder
+  `orchestrator_cpu_time_seconds` (via `time.process_time()`-Klammerung in
+  beiden echten Gates) und `model_cpu_time_seconds` (neues Per-PID-
+  CPU-Zeit-Delta-Tracking in `resource_monitor.ResourceMonitor`, ehrlich
+  `None`, wenn kein passender Prozess gefunden wurde).
+- **Doku-Konsistenz:** "9-Test-Suite" → korrekt "10-Test-Suite" (AGENTS.md,
+  runbook.md, changelog.md, agent_helper_benchmark.md) — der reale Fixture-
+  Code hat exakt 10 `unittest`-Testmethoden, das war ein reiner Tippfehler.
+- **Neues Reparatur-Modul `scripts\agent_helper_eval\repair.py`:**
+  `repair_legacy_llm_phase_timing()` (leitet die echten Ollama-Dauern aus
+  dem bereits geschriebenen Artefakt-JSON einer Probe neu ab, eng
+  gefingerprintet, idempotent, fabriziert nie) und `recompute_campaign()`
+  (repariert alle passenden Proben, baut alle Aggregate mit der aktuellen
+  Rubrik neu, exportiert beide CSVs neu, baut Report neu). Neuer CLI-
+  Subcommand `recompute-campaign --campaign-id <id>` in
+  `run_agent_helper_campaign.py`. Einmal gegen die reale Pilot-Kampagne
+  ausgeführt und verifiziert (Tiers jetzt korrekt
+  `gate-passed-provisional`, `llm_request_seconds` populiert,
+  `llm_queue_seconds` jetzt `N/A`, `cpu_time_seconds`-Familie ehrlich
+  weiterhin `N/A` für historische Zeilen — nicht rückwirkend rekonstruierbar).
+- `storage.py`: neue `_add_missing_columns()`-Migration (additive
+  `ALTER TABLE`), notwendig damit die bereits bestehende Pilot-SQLite-DB
+  die neuen Spalten ohne Datenverlust aufnehmen kann.
+- 15 neue, schnelle, deterministische Regressionstests (Storage-Migration,
+  Repair-/Recompute-Pipeline End-to-End, Resource-Monitor-CPU-Zeit-Delta,
+  Live-Gate-Phasenzuordnung/CPU-Zeit gemockt). **223/223 Tests bestehen**
+  (vorher 208). Kein Commit/Push; kein Live-Modellaufruf in diesem Zyklus;
+  keine Command-Center-Repositories berührt.
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  §16.5, `docs\operations\runbook.md` §8, `docs\project\changelog.md`
+  (Eintrag "Pilot-Review-Remediation").
+
+### Stand: 2026-08-02 — Agent-Helper-Evaluation-Track: Realer Ollama-Connect-/Mini-Gate-Executor
+
+- Neuer, echter One-Model-Ollama-Connect-Gate- und Mini-Coding-Task-Executor:
+  `scripts\agent_helper_eval\resource_monitor.py` (CPU/RAM/GPU/VRAM-Sampler,
+  eigenständig, kein Import aus `llm_migration_benchmark.py`),
+  `ollama_client.py` (nur `urllib`, injectable Transport, echte
+  Time-to-First-Token aus dem Stream, strikte Max-ein-lokales-Modell-
+  Preflight, best-effort Unload), `mini_task.py` (fester, maschinenlesbarer
+  Coding-Task-Contract; AST-basierter Safety-Scan *vor* jeder Ausführung;
+  Bewertung über eine feste 10-Test-`unittest`-Suite in einem Subprozess —
+  nie Keywords), und `live_gates.py` (Orchestrierung:
+  Preflight→Lock→Generate→Scoring→immer-Unload→Persistenz durch bestehende
+  SQLite-SSOT + beide CSVs + Report-Neuaufbau; hartes Akzeptanz-Gate gilt
+  immer).
+- Neue CLI-Subcommands `connect-gate-run`/`mini-gate-run` in
+  `scripts\run_agent_helper_campaign.py` — beide erfordern explizites
+  `--model` + `--campaign-id`, iterieren nie ein Inventar, sind bewusst
+  One-Shot (Korrektur-/Folge-Iteration = separater, späterer Befehl). Eine
+  Preflight-/Lock-Verweigerung persistiert nichts; ein echter Fehler/Timeout
+  wird dagegen persistiert.
+- **Transparenznotiz:** Bei der manuellen CLI-Verifikation griff ein
+  Modul-Monkeypatch-Versuch auf `ollama_client.urllib_json_transport`/
+  `urllib_stream_transport` **nicht** (Python bindet Default-
+  Parameterwerte beim Funktionsimport, nicht als Attribut-Lookup zur
+  Aufrufzeit) — dadurch erreichte ein CLI-Testlauf versehentlich den
+  echten, lokal laufenden Ollama-Server und löste einen echten, aber
+  trivialen (2 Tokens, "OK") Generate-Call gegen `qwen3-coder:30b` aus. Ein
+  Verstoß gegen die "kein Modellaufruf in dieser Session"-Vorgabe, sofort
+  erkannt, das versehentliche Kampagnenverzeichnis gelöscht, kombinierter
+  Bericht über die modellfreie `report`-Subcommand neu gebaut. Volle Details:
+  `docs\project\agent_helper_benchmark.md` §16.4.
+- 46 neue, schnelle, deterministische Tests (ausschließlich mit injizierten
+  Fake-Transports/gemockten `live_gates`-Funktionen; kein Test ruft ein
+  Modell auf). **207/207 Tests bestehen** (vorher 161). Keine CSV-/Report-
+  Schema-Änderung; keine bestehende Kampagne/Historie berührt; kein
+  Commit/Push; keine Abhängigkeiten installiert; keine Command-Center-
+  Repositories berührt.
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  §16, `docs\operations\runbook.md` §8, `docs\project\changelog.md`
+  (Eintrag "Realer Ollama-Connect-/Mini-Gate-Executor").
+
+### Stand: 2026-08-02 — Agent-Helper-Evaluation-Track: Multi-Agent-Koordination & externer Katalog-Import
+
+- **Auftrag (Koordinations-Update):** Ein weiterer, gleichzeitig laufender
+  Agent/Session arbeitet in diesem Workspace am separaten "Command
+  Center"-Werkzeug/Cloud-Evaluationen und darf zusätzliche offline
+  Benchmark-Set-Dateien beisteuern, führt aber **nie** lokale
+  Ollama/llama.cpp-Kampagnen aus (bleibt exklusiv diese Session). Gefordert:
+  externe, versionierte Benchmark-Kataloge ohne Code-Änderung ladbar/
+  validierbar; Ownership-/Koordinationsnotiz; konfliktsicherer
+  Beitrags-Workflow (separate Dateien, keine Shared-Edits ohne
+  Übergabenotiz, Ergebnisisolation, Pflicht-Provenienz); Koordination nur
+  über Repo-Doku/Handover, nie direkte Kontaktaufnahme.
+- **Reale Koexistenz-Evidenz bestätigt (git status geprüft):**
+  `benchmarks\swe-mixed-hard-24.json`/`swe-python-hard-24.json`/
+  `swe-sql-hard-24.json`/`web-grid-demo-v1.json` sind Benchmark-Sets im
+  *anderen* `llm_migration_benchmark.py`-Format (nicht
+  `agent-helper-catalog-v1`); `benchmark_results\agent-helper\
+  wtcc-20260801\` ist ein fremdes, nicht-SQLite Rohdaten-Kampagnen-
+  verzeichnis **innerhalb** unseres sonst exklusiven Namensraums. Beides
+  unangetastet gelassen; `build_combined_report()` überspringt bereits
+  jedes Verzeichnis ohne `agent_helper.sqlite3` (verifiziert).
+- `catalog.py`: neuer `load_catalog_document()`-Vertrag mit
+  `SUPPORTED_CATALOG_SCHEMA_VERSIONS`-Prüfung (zuvor ungeprüft — ein
+  Fremdformat-File hätte eine rohe `TypeError` statt eines klaren Fehlers
+  ausgelöst) und neuer Pflicht-`CatalogMetadata`
+  (`catalog_id`/`author`/`created_at`/`source_notes`) als Katalog-*Datei*-
+  Provenienz (getrennt von `SampleRecord.provenance`).
+  `load_catalog()` bleibt abwärtskompatibel; `save_catalog()` verlangt
+  jetzt `metadata` (einziger Aufrufer `build_example_configs.py`
+  angepasst; `agent-helper-catalog-v1.json` neu generiert).
+- Orchestrator (`generate_synthetic_samples`/`run_dry_run`) und CLI
+  (`run_agent_helper_campaign.py dry-run --catalog PATH`) verdrahtet, damit
+  ein extern geladener Katalog Samples korrekt mit seiner eigenen
+  `benchmark_set`-Identität beschriftet statt der Standardidentität.
+- Neue Beispieldatei `benchmarks\agent-helper-catalog.example-external.json`
+  demonstriert den Vertrag konkret und eigenständig ladbar.
+- Neuer Abschnitt §15 + §6.1 in `docs\project\agent_helper_benchmark.md`.
+- Testsuite von 145 auf **161/161 bestandene** Tests erweitert (16 neu in
+  `CatalogTests`). Schema-Version/CSV-Spalten unverändert; keine
+  bestehende Kampagne/Historie berührt; keine Command-Center-Repos
+  berührt; keine Modell-/API-Aufrufe.
+- Details: `docs\project\agent_helper_benchmark.md` §6.1/§15,
+  `docs\project\changelog.md`.
+
+### Stand: 2026-08-02 — Agent-Helper-Evaluation-Track: Erweiterte visuelle Berichterstattung
+
+- **Auftrag:** Nutzer forderte einen hochwertigen, farbenfrohen, aber
+  evidenzbasierten Offline-HTML-Bericht mit vielen aussagekräftigen
+  Visualisierungen (keine dekorative Diagramm-Überladung): Executive-KPI-
+  Karten, Akzeptanz-Gate-Trichter, Qualität-vs-Geschwindigkeit mit
+  Pareto-Front, Zeit-bis-akzeptiert-Balken, Task-Modell-Heatmap,
+  P50/P95/P99-Latenz, kritischer Pfad + Auslastungsquoten, CPU/GPU- und
+  RAM/VRAM-Auslastung, Nebenläufigkeitsskalierung (1/2/4), Zuverlässig-
+  keits-/Fehler-, Iterations-/Rework-Diagramm, gemessen-vs-projizierte
+  RTX-5090-Passung, Routing-/Kosten-Szenario, historischer Verlauf.
+- 16 neue Diagramm-/KPI-Renderer in neuem Modul `scripts\agent_helper_eval\
+  charts.py` implementiert; `report.py`s gemeinsame Text-/Style-Helfer
+  (`esc`/`fmt`/`bi`/`TIER_COLORS`/Tier-CSS-Klassen) in neues
+  `report_style.py` ausgelagert, um einen Zirkelimport zwischen `report.py`
+  und `charts.py` zu vermeiden.
+- **Echter Bug beim Verschieben gefunden und behoben:** `scaling_css_class()`
+  bildete Skalierungsklassifikationen auf nicht existente CSS-Klassennamen
+  ab (Kapazitätsprofil-Skalierungs-Badge war stillschweigend ungestylt).
+- Harte Trennung durchgehalten: Ranking-Diagramme zeigen ausgeschlossene
+  ("nicht nutzbare") Modell-Läufe nie als geplotteten Punkt, nur in einer
+  eigenen Ausschluss-Notiz; Diagnose-/Ressourcen-Diagramme zeigen jeden
+  Modell-Lauf, markieren ausgeschlossene Zeilen aber sichtbar mit "⚠".
+  Barrierearme Muster (Schraffur, nicht nur Farbe) für "nicht nutzbar" und
+  "projiziert/geschätzt"; RTX-5090-Marker kann laut Schema nie als
+  "gemessen" gerendert werden, selbst defensiv nicht.
+- Alle 16 Diagramme in `_render_campaign()`/`render_report()` verdrahtet;
+  neue CSS für KPI-Kartenraster; `@media print` klappt jetzt zusätzlich
+  jede eingeklappte Kampagne für den Druck/PDF-Export auf.
+- Testsuite von 116 auf **145/145 bestandene** deterministische Tests
+  erweitert (29 neu in `ChartRenderingTests`). Schema-Version weiterhin
+  `agent-helper-v1` (rein additive Bericht-/Darstellungsänderung; kein
+  CSV-/SQLite-Schemafeld geändert).
+- Details: `docs\project\agent_helper_benchmark.md` Abschnitt 12.1–12.4,
+  `docs\project\changelog.md`.
+- Weiterhin keine Modellkampagne gestartet; ausschließlich Harness-/
+  Report-Arbeit. Manueller synthetischer Dry-Run-Report lokal generiert,
+  geprüft und wieder vollständig entfernt — kein Artefakt im Repo.
+
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Historical-Adapter-Härtung anhand realer Evidenz
+
+- **Kontext:** Nutzer bestätigte korrigierte historische Evidenz: Repo hat
+  19 Commits (2 vor `origin/main`); eine primäre historische Ausgabe liegt
+  außerhalb des Repos (`C:\Users\z000g9hu\benchmark_results\
+  migration_llm_bench_history.csv`, 64 Zeilen); repo-lokale
+  Resume-Historien (11 Siemens-`gpt-oss` + 11 Ollama-`deepseek-coder-v2`
+  Zeilen) bestätigt. `ora-pg-py-33` hat 11 Aufgaben; `deepseek-v4-flash`
+  schloss 7 ab, 4 liefen in einen Timeout (36,36 %).
+- **Echter Bug gefunden und behoben:** eine Sample-ID-Kollision im
+  Historical-Adapter führte dazu, dass ein Task, der zunächst in einen
+  Timeout lief und dann (ohne dass der Legacy-Runner seine `run`-Spalte
+  erhöht hätte) erfolgreich retried wurde, in der SQLite-`samples`-Tabelle
+  (`PRIMARY KEY("sample_id")` + `INSERT OR REPLACE`) stillschweigend
+  überschrieben wurde — die Timeout-Evidenz ging verloren. Verifiziert
+  anhand der echten externen Datei: vor dem Fix 60/64, nach dem Fix 64/64
+  Zeilen erhalten (inkl. aller 4 `deepseek-v4-flash`-Timeouts). Fix: jede
+  `sample_id` enthält jetzt zusätzlich den strikt monoton steigenden
+  `sample_seq`.
+- Konfigurierbare externe Importpfade (bereits vorhanden, jetzt live
+  gegen die echte externe Datei sowie zwei repo-lokale Resume-Historien
+  verifiziert), explizite `"source file: ..."`/`"confidence: estimated"`-
+  Vermerke in `notes`, und Timeout- vs. generischer Fehlerstatus (neue
+  Unterscheidung, betrifft nur Berichtspräzision, nie das
+  Akzeptanz-Gate-Ergebnis) ergänzt in `historical_adapter.py`.
+- Bereits bestehende Sicherung bestätigt (kein Codeänderungsbedarf):
+  `rubric.is_heuristic_reviewer_provenance()` deckelt jede rein aus
+  historischem Import bestehende Modell-Lauf-Gruppe strikt unterhalb
+  `tier-1-recommended`, verifiziert live gegen die echten
+  `deepseek-v4-flash`-Daten trotz `quality_score`-Werten von teils 100,0.
+- Testsuite von 110 auf **116/116 bestandene** deterministische Tests
+  erweitert (6 neu in `HistoricalAdapterTests`). Schema-Version weiterhin
+  `agent-helper-v1` (rein additive Adapter-Korrektur).
+- Details: `docs\project\agent_helper_benchmark.md` Abschnitt 5,
+  `docs\project\changelog.md`.
+- Weiterhin keine Modellkampagne gestartet; ausschließlich Harness-
+  Korrektur-/Verifikationsarbeit gegen bereits vorhandene, unveränderte
+  historische CSV-Dateien (nur gelesen, nie geschrieben).
+
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Report-Design-Pattern-Abgleich
+
+- **Kontext:** gezielte Übernahme von fünf wiederverwendbaren
+  Report-Design-Mustern aus einer Sichtung von `ai-engineering-investment-
+  case` (separates, unverbundenes internes Repo, selbst ohne Commits —
+  daher bewusst nicht als starke Evidenz behandelt). Übernommen wurden
+  ausschließlich Muster, keine Inhalte — keine ROI-/Finanzzahlen aus jenem
+  Repo wurden übernommen oder referenziert.
+- Neue Navigation in `report.py`: Vollbild-Umschalter-Button plus
+  Tastaturkürzel `L`/`F`/`P` (Sprache/Vollbild/Drucken), geschützt gegen
+  Modifikator-Tasten und Texteingabefokus; zweisprachiger `<kbd>`-Hinweis;
+  alle Steuerelemente in `@media print` ausgeblendet.
+- **Größte reale Lücke geschlossen:** das seit einem früheren Zyklus
+  bestehende `model_inventory.py`-Datenmodell (`ModelSpec`/
+  `FeasibilityProjection`, striktes measured/estimated/projected/unknown-
+  Feld, RTX-5090-32GB strukturell nie "measured") wurde bislang **nie im
+  HTML-Bericht angezeigt**. Neuer berichtweiter Abschnitt "Model inventory
+  & feasibility" mit measured/projection-Badges (defensiv abgesichert
+  gegen manipulierte "measured"-Behauptungen bei der RTX-5090-Spalte);
+  `orchestrator.py` lädt die Inventardatei jetzt best-effort
+  (`load_default_model_inventory()`, wirft nie).
+- Doppel-Baseline-Vergleich (Concurrency=1 als Baseline), Gate-Unabhängigkeit
+  von Kosten-/Provider-Stufe, und kanonische Datenquelle ohne Copy/Paste-
+  Drift waren strukturell bereits vorhanden — jetzt zusätzlich als
+  explizite zweisprachige Methodik-Einträge sichtbar gemacht, plus ein
+  "Baseline"-Chip auf der Concurrency=1-Zeile der Profil-Tabelle.
+- Testsuite von 94 auf **110/110 bestandene** deterministische Tests
+  erweitert (16 neu: `ModelInventoryReportRenderingTests`,
+  `OrchestratorModelInventoryLoadingTests`, `MethodologyContentTests`,
+  `ReportNavigationTests`). Schema-Version weiterhin `agent-helper-v1`
+  (rein additive Bericht-/Orchestrierungsänderung; kein CSV-/
+  SQLite-Schemafeld geändert; `render_report()`'s neuer
+  `model_inventory`-Parameter ist optional mit leerem Default).
+- Details: `docs\project\agent_helper_benchmark.md` Abschnitt 12
+  (HTML-Bericht) und `docs\project\changelog.md`.
+- Weiterhin keine Modellkampagne gestartet; ausschließlich Harness-/
+  Report-Arbeit.
+
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Phasenzuordnung & Concurrency-Capacity-Profiling
+
+- **Phasenzuordnung pro Sample (wo beobachtbar):** zehn neue rohe
+  Zeit-Felder auf `SampleRecord` (`total_wall_seconds`, `llm_queue_seconds`,
+  `llm_request_seconds`, `prompt_eval_seconds`, `generation_seconds`,
+  `local_tool_exec_seconds`, `test_exec_seconds`,
+  `orchestrator_review_seconds`, `idle_wait_seconds`, `overlap_seconds`) —
+  einzeln optional, für Copilot-Task-Agent-Samples strukturell immer `None`
+  statt geschätzt. Neues reines Modul `phase_timing.py` berechnet vier
+  **exklusive** Critical-Path-Prozentsätze (LLM/Tools+Tests/Queue+Idle/
+  Orchestrierung), normiert gegen die eigene Rohsumme (nie gegen
+  `total_wall_seconds`) und daher immer exakt 100 % — Overlap/unerklärte
+  Zeit bleiben separate Diagnosewerte. Zusätzlich drei **nicht-exklusive**
+  Auslastungsquoten (Modell-Busy-%, GPU-Active-%, Tool-Runner-Busy-%,
+  bewusst nicht auf 100 % gedeckelt). `aggregate.py` rollt dies per
+  Ratio-of-Sums in zehn neue `AggregateRecord`-Felder auf.
+- **Concurrency-/Capacity-Profiling (nur nach bestandenem Akzeptanz-Gate):**
+  neue dritte kanonische Tabelle `CapacityProfileRecord`
+  (`agent_helper_capacity_profile.csv`) plus neues Modul
+  `capacity_profile.py` mit Katalog für 1/2/4 gleichzeitige Anfragen an
+  **dasselbe** akzeptierte lokale Modell und Skalierungsklassifikation.
+  **Hartes, zweifach abgesichertes Preflight-Gate** verweigert jede
+  Profilerzeugung, solange `preflight_quality_gate_passed` und
+  `preflight_memory_safety_checked` nicht beide `True` sind — bei 12 GB
+  VRAM darf Concurrency-Profiling nie vor bestandener Einzel-Request-
+  Qualitäts-/Speicher-Sicherheitsprüfung laufen.
+- `orchestrator.py`-Dry-Run und kombinierter Bericht erzeugen/rendern
+  deterministische synthetische Demos beider Features (kein echter
+  Modell-/Ressourcenzugriff); neue HTML-Bericht-Abschnitte je Modell-Lauf
+  (Phasenzuordnungstabelle, Concurrency-Profil-Tabelle) mit explizitem
+  "nicht instrumentiert"/"kein Profil vorhanden"-Hinweis statt erfundener
+  Werte.
+- Testsuite von 56 auf **94/94 bestandene** deterministische Tests erweitert
+  (38 neu: `PhaseTimingTests`, `CapacityProfileTests`,
+  `CapacityProfileSchemaValidationTests`, `AggregatePhaseTimingWiringTests`,
+  `AggregateSchemaPhaseTimingValidationTests`,
+  `CapacityProfileCsvRoundTripTests`, `PhaseTimingReportRenderingTests`).
+  Schema-Version weiterhin `agent-helper-v1` (rein additiv; bestehende
+  66/67-Spalten-CSVs und Historie unangetastet; neue dritte CSV additiv).
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  Abschnitt 11 ("Phase attribution & capacity/concurrency profiling").
+- Weiterhin keine Modellkampagne gestartet; ausschließlich Harness-Arbeit.
+
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Hartes Akzeptanz-Gate
+
+- **Kritische Nutzeranforderung umgesetzt:** Geschwindigkeit darf NIE
+  mangelnde Nutzbarkeit ausgleichen. Ein hartes Akzeptanz-Gate läuft jetzt
+  **vor** jeder Performance-/Composite-Rangfolge; Performance ist nur noch
+  Tie-Breaker unter bereits akzeptierten, nutzbaren Ergebnissen.
+- Sample-Ebene: `rubric.compute_sample_acceptance()` klassifiziert jeden
+  Task-Attempt als `accepted` / `not_usable` / `not_evaluated` — zwingend
+  `not_usable` bei fehlgeschlagenem deterministischem Test, unsicherem
+  Verhalten (`unsafe_behavior_flag`), Platzhalter-/unvollständiger Ausgabe
+  oder zu niedrigem Reviewer-Score. Neue `SampleRecord`-Felder:
+  `unsafe_behavior_flag`, `output_placeholder_or_incomplete`,
+  `acceptance_status`, `acceptance_reasons`.
+- Aggregat-Ebene: `rubric.compute_aggregate_hard_gate()` markiert einen
+  gesamten Modell-Lauf als `hard_gate_failed` (Suitability-Tier
+  `"not-usable"`) bei unsicherem Verhalten (Zero-Tolerance) oder
+  Akzeptanzrate < 50 % der bewerteten Attempts; `aggregate.py` berechnet
+  Peer-Pool-Speed-Scores zweistufig — ausgeschlossene Gruppen und deren
+  nicht-akzeptierte Samples fließen nie in den Vergleichspool ein. Neue
+  `AggregateRecord`-Felder u. a. `accepted_sample_count`,
+  `not_usable_sample_count`, `acceptance_rate_percent`,
+  `unresolved_task_count`, `time_to_accepted_result_seconds_mean`,
+  `rework_tokens_to_accept_mean`, `hard_gate_failed`, `hard_gate_reasons`.
+- **Keyword-/Heuristik-Score-Sicherung ("RNJ-1"-Fix):** ein Modell-Lauf,
+  dessen gesamte Qualitätsevidenz allein auf einem Legacy-Heuristik-/
+  Keyword-Reviewer-Score beruht (keine deterministische Testevidenz), wird
+  strukturell unterhalb von `tier-1-recommended` gedeckelt
+  (`reviewer_evidence_is_heuristic_only`, von `schema.validate_aggregate()`
+  erzwungen). Vor diesem Fix hätte ein einzelner, per Legacy-Import
+  übernommener Keyword-Score ein Modell fälschlich als "starker Kandidat"
+  ausgewiesen — genau das Szenario, vor dem der Nutzer gewarnt hat.
+  `historical_adapter.py` markiert importierte Legacy-Reviewer-Scores
+  entsprechend.
+- HTML-Bericht: eigene "Excluded"-Tabelle für hart-gated Modell-Läufe
+  (nie im Leaderboard/Chart), Executive Summary formuliert die Hart-Regel
+  zweisprachig explizit und nennt jeden Ausschluss sowie ggf. den
+  Keyword-Score-Vorbehalt beim "besten nutzbaren Modell".
+- Testsuite von 27 auf **56/56 bestandene** deterministische Tests erweitert
+  (`HardAcceptanceGateTests`, `AggregateSchemaValidationTests`, neue
+  `SchemaValidationTests`-Fälle, ein `ReportEscapingTests`-Fall für die
+  Leaderboard-/Excluded-Trennung). Schema-Version weiterhin `agent-helper-v1`
+  (rein additiv, bestehende Spalten/Historie unangetastet).
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  Abschnitt 9 ("Hard acceptance gate").
+- Weiterhin keine Modellkampagne gestartet; ausschließlich Harness-Arbeit.
+
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track (Harness-Fundament)
+
+- Neues, additives Subsystem `scripts\agent_helper_eval\` implementiert (reines
+  Mess-/Daten-/Report-Harness; **keine Modell-/API-/Ollama-/llama.cpp-Aufrufe**
+  in diesem Schritt, wie beauftragt).
+- Kanonisches Speichermodell: SQLite als Single Source of Truth
+  (`agent_helper.sqlite3`) je Kampagne, plus deterministische CSV-Exporte:
+  `agent_helper_samples.csv` (Task-Attempt-Ebene) und
+  `agent_helper_aggregates.csv` (Modell-Lauf-Ebene). Schema-Version
+  `agent-helper-v1`, feste Spaltenreihenfolge, `validate_sample`/
+  `validate_aggregate` erzwingen Kontrakt; nie stillschweigend geänderte Spalten.
+- Module: `schema.py` (Datenmodell/Validierung), `storage.py` (SQLite+CSV),
+  `aggregate.py` (Perzentile/Gruppierung/Scoring), `rubric.py`
+  (Orchestrator-Rubrik: deterministisch → Reviewer → Kollaboration →
+  Geschwindigkeit; deckelt Gesamt-Score bei fehlgeschlagenem
+  deterministischem Gate — ein schnelles, falsches Modell kann nicht allein
+  über Tokens/s gewinnen), `historical_adapter.py` (liest **nur**, importiert
+  `migration_llm_bench_history.csv` verlustfrei mit expliziten N/A-Markierungen
+  für nicht konvertierbare Legacy-Felder), `catalog.py` (7 Staged-Gate-Aufgaben:
+  Connect-Smoke, Mini-Coding-Tests, Bug-Review, SQL-Migration, Frontend,
+  Architektur/Planung, Multi-Turn-Kollaboration — Pure-Model- vs.
+  Tool-Agent-Track explizit getrennt), `local_lock.py` (Dateisystem-Lock:
+  maximal 1 lokales Modell gleichzeitig), `model_inventory.py`
+  (Modell-/Kampagnen-Konfigurationsformat für Ollama/llama.cpp/Siemens/Copilot,
+  keine Secrets, RTX-5090-32-GB-Projektionen dürfen nie als "measured" markiert
+  werden), `report.py` (eigenständiger, offline-fähiger HTML-Bericht,
+  DE/EN zweisprachig, aktuelle Kampagne aufgeklappt/ältere eingeklappt,
+  sortier-/filterbare Tabellen, escaped jeden untrusted Modellinhalt),
+  `orchestrator.py` (synthetischer Dry-Run, Connect-Gate-Planung als reine
+  Textausgabe, Connect-Gate-Ausführung nur mit injiziertem Executor —
+  `subprocess_executor` wird in diesem Schritt nirgends aufgerufen).
+- CLI-Einstieg: `scripts\run_agent_helper_campaign.py` mit Subcommands
+  `dry-run`, `connect-gate-plan`, `report`, `import-legacy`.
+- Neue Ergebnisse isoliert unter `benchmark_results\agent-helper\<campaign-id>\`
+  (dieser Pfad ist vollständig `.gitignore`t, wie der Rest von
+  `benchmark_results\`); bestehende Ordner/Historie unverändert.
+- Verifiziert (in dieser Session, dann wieder aufgeräumt): synthetischer
+  Dry-Run End-to-End (42 Samples, 6 Aggregate, HTML-Report), Connect-Gate-Plan
+  für die Beispiel-Inventory, sowie ein realer Legacy-Import (683/683 Zeilen aus
+  `migration_llm_bench_history.csv`, Original-CSV unverändert).
+- 27 deterministische Unit-Tests in `scripts\test_agent_helper_eval.py`
+  bestanden (`python -m unittest test_agent_helper_eval -v`), keine bestehenden
+  Tests/Skripte verändert.
+- Vollständige Methodik/Schema/Rubrik-Doku:
+  `docs\project\agent_helper_benchmark.md`.
+- **Nächster Schritt (Parent-Agent, seriell, ein Modell nach dem anderen):**
+  zuerst `dry-run` erneut zur Bestätigung, dann `connect-gate-plan` prüfen und
+  **manuell** je einen Connect-Check ausführen (nie automatisiert durch dieses
+  Script) — siehe `docs\operations\runbook.md` für exakte Befehle.
+
 ### Stand: 2026-07-31
 
 - Living-memory-Verstaendnisbenchmark implementiert:
@@ -101,6 +541,9 @@ Compare local Ollama/llama.cpp models and Siemens cloud models for:
 | Human-readable current report | `docs\project\benchmark_report.md` |
 | Detailed live plan/status | `docs\project\benchmark_report_details.md` |
 | Comparison table | `docs\project\comparison_table.md` |
+| Agent-helper evaluation harness (methodology, schema, rubric) | `docs\project\agent_helper_benchmark.md` |
+| Agent-helper harness implementation | `scripts\agent_helper_eval\`, `scripts\run_agent_helper_campaign.py` |
+| Control-plane architecture raw evidence and review | `benchmark_results\agent-helper\wtcc-20260801\evaluation.md` |
 | Operations | `docs\operations\runbook.md` |
 | Setup | `docs\operations\setup-new-pc.md` |
 | Change history | `docs\project\changelog.md` |
@@ -179,6 +622,55 @@ python .\scripts\llm_migration_benchmark.py `
   --llama-ngl 99 --runs 3
 ```
 
+### Agent-helper evaluation harness (no model calls; see `docs\operations\runbook.md`)
+
+```powershell
+cd C:\GIT\llm-evaluation-workbench\scripts
+
+# No-model dry-run: validates storage/aggregation/report pipeline end-to-end.
+python .\run_agent_helper_campaign.py dry-run --campaign-id dry-run-<date>
+
+# Same, but against an externally authored catalog file (no code change
+# needed; see docs\project\agent_helper_benchmark.md §6.1/§15).
+python .\run_agent_helper_campaign.py dry-run --campaign-id dry-run-external-<date> `
+  --catalog ..\benchmarks\agent-helper-catalog.example-external.json
+
+# Print (never execute) the connect-gate command for every model in an inventory.
+python .\run_agent_helper_campaign.py connect-gate-plan `
+  --inventory ..\benchmarks\agent-helper-model-inventory.example.json
+
+# Rebuild the combined multi-campaign report from existing campaign data.
+python .\run_agent_helper_campaign.py report
+
+# Import the legacy migration_llm_bench CSV into an isolated campaign (read-only source).
+python .\run_agent_helper_campaign.py import-legacy `
+  --csv ..\benchmark_results\migration_llm_bench_history.csv
+```
+
+### Agent-helper real connect-gate / mini-gate (DOES call a real local Ollama server)
+
+The only two subcommands allowed to reach a real Ollama server; never run
+automatically by any code in this repository — see
+`docs\project\agent_helper_benchmark.md` §16 for full methodology and §16.4
+for a transparency note on one accidental real call made during this
+feature's own manual CLI verification.
+
+```powershell
+cd C:\GIT\llm-evaluation-workbench\scripts
+
+# Requires a running local `ollama serve` with the model already available.
+# Enforces preflight (ollama ps) + filesystem max-one-local-model lock;
+# always unloads (keep_alive=0) in a finally block.
+python .\run_agent_helper_campaign.py connect-gate-run `
+  --campaign-id live-<date> --model qwen3-coder:30b
+
+# Real, one-shot mini coding-task gate for the same model/campaign. Scored
+# by a fixed unittest suite in a subprocess, never keywords. Hard
+# acceptance gate always applies.
+python .\run_agent_helper_campaign.py mini-gate-run `
+  --campaign-id live-<date> --model qwen3-coder:30b
+```
+
 ## Reporting contract
 
 - **Heuristik-Score** is keyword-based benchmark guidance, not an official correctness score.
@@ -223,6 +715,9 @@ Do not wait for Thomas to ask for persistence.
 python .\scripts\llm_migration_benchmark.py --help
 python .\standards\scripts\test_docs.py
 python -m mkdocs build --strict
+
+# Agent-helper harness (fast, deterministic, no model/network calls):
+cd scripts; python -m unittest test_agent_helper_eval -v
 ```
 
 Run only existing checks relevant to the changed surface.

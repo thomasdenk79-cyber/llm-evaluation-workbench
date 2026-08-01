@@ -1,0 +1,84 @@
+{
+  "models": [
+    {
+      "provider": "local",
+      "backend": "ollama",
+      "model_id": "qwen3-coder:30b",
+      "display_name": "Qwen3 Coder 30B (Ollama, MoE ~3.3B active)",
+      "architecture": "moe",
+      "params_billion": 30.0,
+      "active_params_billion": 3.3,
+      "quantization": "Q4_K_M",
+      "context_length": 131072,
+      "size_gb_on_disk": 18.5,
+      "fits_12gb_vram": {
+        "fits": true,
+        "confidence": "measured",
+        "assumptions": "Observed running with ngl=99 on the 12 GB RTX 3500 Ada notebook GPU (see AGENTS.md local recommendations).",
+        "notes": null
+      },
+      "fits_rtx5090_32gb_projection": {
+        "fits": true,
+        "confidence": "projected",
+        "assumptions": "32 GB nominal VRAM is comfortably larger than the ~18.5 GB on-disk size; assumes similar quantization and no other concurrent VRAM consumers. Not measured on that hardware.",
+        "notes": null
+      },
+      "notes": "Example inventory entry; verify the tag with 'ollama list' before a real campaign."
+    },
+    {
+      "provider": "local",
+      "backend": "llama_cpp",
+      "model_id": "gpt-oss:20b=C:\\Users\\z000g9hu\\llama.cpp\\models\\gpt-oss-20b-MXFP4.gguf",
+      "display_name": "GPT-OSS 20B (llama.cpp, MXFP4)",
+      "architecture": "dense",
+      "params_billion": 20.0,
+      "active_params_billion": null,
+      "quantization": "MXFP4",
+      "context_length": 131072,
+      "size_gb_on_disk": 12.9,
+      "fits_12gb_vram": {
+        "fits": true,
+        "confidence": "measured",
+        "assumptions": "Measured on this workbench with ngl=99, Balanced power plan (see AGENTS.md local recommendations).",
+        "notes": null
+      },
+      "fits_rtx5090_32gb_projection": {
+        "fits": true,
+        "confidence": "projected",
+        "assumptions": "Full offload plus a much larger context window would fit well within 32 GB; not tested on that hardware.",
+        "notes": null
+      },
+      "notes": "Example inventory entry; path must match the local llama.cpp models directory."
+    },
+    {
+      "provider": "siemens",
+      "backend": "siemens_api",
+      "model_id": "gpt-oss-120b",
+      "display_name": "Siemens LLM API: gpt-oss-120b",
+      "architecture": "unknown",
+      "params_billion": null,
+      "active_params_billion": null,
+      "quantization": null,
+      "context_length": null,
+      "size_gb_on_disk": null,
+      "fits_12gb_vram": null,
+      "fits_rtx5090_32gb_projection": null,
+      "notes": "Cloud-hosted; local VRAM fit is not applicable. The auth token is read from a local token file at run time and must never be stored in this inventory."
+    },
+    {
+      "provider": "github",
+      "backend": "copilot_agent",
+      "model_id": "github-copilot-cli/default-agent",
+      "display_name": "GitHub Copilot CLI agent reference (runtime-selected model)",
+      "architecture": "unknown",
+      "params_billion": null,
+      "active_params_billion": null,
+      "quantization": null,
+      "context_length": null,
+      "size_gb_on_disk": null,
+      "fits_12gb_vram": null,
+      "fits_rtx5090_32gb_projection": null,
+      "notes": "Tool-agent reference only. Raw tokens/sec, TTFT, and process-level resource metrics are not reliably exposed by this runtime; record as N/A rather than estimate. See rubric.COPILOT_METRICS_CAVEAT_EN / _DE."
+    }
+  ]
+}

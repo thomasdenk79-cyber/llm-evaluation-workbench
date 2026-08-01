@@ -23,7 +23,9 @@
 param(
     [switch]$StatusOnly,
     [string]$MarkDone = "",
-    [switch]$Reset
+    [switch]$Reset,
+    [int]$WatchdogCheckSec = 60,
+    [int]$WatchdogStallMin = 20
 )
 
 Set-StrictMode -Version Latest
@@ -35,7 +37,11 @@ $STATE_FILE  = Join-Path $ROOT "benchmark_results\campaign_local_state.json"
 $LLAMA_SRV   = "C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe"
 $GPT_OSS     = "C:\Users\z000g9hu\llama.cpp\models\gpt-oss-20b-MXFP4.gguf"
 $QWEN35      = "C:\Users\z000g9hu\llama.cpp\models\Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
+$QWEN30      = "C:\Users\z000g9hu\llama.cpp\models\qwen3-coder-30b-from-ollama.gguf"
+$DEEPSEEK16  = "C:\Users\z000g9hu\llama.cpp\models\deepseek-coder-v2-16b-from-ollama.gguf"
+$QWEN27      = "C:\Users\z000g9hu\llama.cpp\models\qwen3.6-27b-q4_K_M-from-ollama.gguf"
 $RUNS        = 3
+$BENCHMARK_ID = "ora-pg-py-33"
 
 # ── Power-Profil ────────────────────────────────────────────────────────────
 function Set-Power([string]$Profile) {
@@ -50,81 +56,93 @@ function Set-Power([string]$Profile) {
 # ── Run-Definitionen ────────────────────────────────────────────────────────
 # id muss eindeutig und stabil sein (wird als Done-Key gespeichert)
 $ALL_RUNS = @(
-    # ── Ollama (highperf, seriell) ──────────────────────────────────────────
+    # ── Ollama: MoE-Modelle + deepseek (alle relevant für diesen PC) ─────────
     @{
         id      = "ollama-qwen3-coder-30b-highperf"
-        label   = "Ollama | qwen3-coder:30b | highperf"
+        label   = "Ollama | qwen3-coder:30b (MoE 3.3B aktiv) | highperf"
         power   = "highperf"
         args    = @("--backend", "ollama", "--ollama-model", "qwen3-coder:30b", "--runs", $RUNS)
     },
     @{
         id      = "ollama-deepseek-coder-v2-16b-highperf"
-        label   = "Ollama | deepseek-coder-v2:16b | highperf"
+        label   = "Ollama | deepseek-coder-v2:16b (MoE, passt in VRAM) | highperf"
         power   = "highperf"
         args    = @("--backend", "ollama", "--ollama-model", "deepseek-coder-v2:16b", "--runs", $RUNS)
     },
     @{
+        id      = "ollama-qwen3.6-35b-q4-highperf"
+        label   = "Ollama | qwen3.6:35b-a3b-q4_K_M (MoE 3B aktiv) | highperf"
+        power   = "highperf"
+        args    = @("--backend", "ollama", "--ollama-model", "qwen3.6:35b-a3b-q4_K_M", "--runs", $RUNS)
+    },
+    # ── llama.cpp: gleiche 5 Modelle wie Ollama (optimierte lokale Parameter) ─
+    @{
+        id      = "llamacpp-qwen3-coder-30b-highperf"
+        label   = "llama.cpp | qwen3-coder:30b | highperf | ngl99"
+        power   = "highperf"
+        args    = @("--backend", "llama_cpp",
+                    "--llama-server", $LLAMA_SRV,
+                    "--llama-model", "qwen3-coder:30b=$QWEN30",
+                    "--llama-ngl", "99",
+                    "--llama-extra-args", "--mlock --threads 20",
+                    "--runs", $RUNS)
+    },
+    @{
+        id      = "llamacpp-deepseek-coder-v2-16b-highperf"
+        label   = "llama.cpp | deepseek-coder-v2:16b | highperf | ngl99"
+        power   = "highperf"
+        args    = @("--backend", "llama_cpp",
+                    "--llama-server", $LLAMA_SRV,
+                    "--llama-model", "deepseek-coder-v2:16b=$DEEPSEEK16",
+                    "--llama-ngl", "99",
+                    "--llama-extra-args", "--mlock --threads 20",
+                    "--runs", $RUNS)
+    },
+    @{
+        id      = "llamacpp-qwen3.6-35b-moe-highperf"
+        label   = "llama.cpp | qwen3.6:35b-a3b | Expert-Offload | highperf | ngl99"
+        power   = "highperf"
+        args    = @("--backend", "llama_cpp",
+                    "--llama-server", $LLAMA_SRV,
+                    "--llama-model", "qwen3.6:35b-a3b=$QWEN35",
+                    "--llama-ngl", "99",
+                    "--llama-extra-args", "--override-tensor blk\.\.*\.ffn_(up|down|gate)_exps=CPU --mlock --threads 20",
+                    "--runs", $RUNS)
+    },
+    # ── Dense-Modelle ───────────────────────────────────────────────────────────
+    @{
         id      = "ollama-gpt-oss-20b-highperf"
-        label   = "Ollama | gpt-oss:20b | highperf"
+        label   = "Ollama | gpt-oss:20b (Dense, Referenz) | highperf"
         power   = "highperf"
         args    = @("--backend", "ollama", "--ollama-model", "gpt-oss:20b", "--runs", $RUNS)
     },
     @{
+        id      = "llamacpp-gpt-oss-20b-highperf"
+        label   = "llama.cpp | gpt-oss:20b (Dense, Referenz) | highperf | ngl99"
+        power   = "highperf"
+        args    = @("--backend", "llama_cpp",
+                    "--llama-server", $LLAMA_SRV,
+                    "--llama-model", "gpt-oss:20b=$GPT_OSS",
+                    "--llama-ngl", "99",
+                    "--llama-extra-args", "--mlock --threads 20",
+                    "--runs", $RUNS)
+    },
+    @{
+        id      = "llamacpp-qwen3.6-27b-q4-highperf"
+        label   = "llama.cpp | qwen3.6:27b-q4_K_M (Dense, Referenz) | highperf | ngl99"
+        power   = "highperf"
+        args    = @("--backend", "llama_cpp",
+                    "--llama-server", $LLAMA_SRV,
+                    "--llama-model", "qwen3.6:27b-q4_K_M=$QWEN27",
+                    "--llama-ngl", "99",
+                    "--llama-extra-args", "--mlock --threads 20",
+                    "--runs", $RUNS)
+    },
+    @{
         id      = "ollama-qwen3.6-27b-q4-highperf"
-        label   = "Ollama | qwen3.6:27b-q4_K_M | highperf"
+        label   = "Ollama | qwen3.6:27b-q4_K_M (Dense, Referenz) | highperf"
         power   = "highperf"
         args    = @("--backend", "ollama", "--ollama-model", "qwen3.6:27b-q4_K_M", "--runs", $RUNS)
-    },
-    @{
-        id      = "ollama-qwen3.6-35b-q4-highperf"
-        label   = "Ollama | qwen3.6:35b-a3b-q4_K_M | highperf"
-        power   = "highperf"
-        args    = @("--backend", "ollama", "--ollama-model", "qwen3.6:35b-a3b-q4_K_M", "--runs", $RUNS)
-    },
-    # ── llama.cpp balanced ngl99 (balanced schlägt highperf bei llama.cpp!) ─
-    @{
-        id      = "llamacpp-gpt-oss-20b-balanced-ngl99"
-        label   = "llama.cpp | gpt-oss:20b | balanced | ngl99"
-        power   = "balanced"
-        args    = @("--backend", "llama_cpp",
-                    "--llama-server", $LLAMA_SRV,
-                    "--llama-model", "gpt-oss:20b=$GPT_OSS",
-                    "--llama-ngl", "99", "--runs", $RUNS)
-    },
-    @{
-        id      = "llamacpp-qwen3.6-35b-balanced-ngl99"
-        label   = "llama.cpp | qwen3.6:35b-a3b | balanced | ngl99"
-        power   = "balanced"
-        args    = @("--backend", "llama_cpp",
-                    "--llama-server", $LLAMA_SRV,
-                    "--llama-model", "qwen3.6:35b-a3b=$QWEN35",
-                    "--llama-ngl", "99", "--runs", $RUNS)
-    },
-    # ── llama.cpp highperf ngl99 (Vergleich) ────────────────────────────────
-    @{
-        id      = "llamacpp-gpt-oss-20b-highperf-ngl99"
-        label   = "llama.cpp | gpt-oss:20b | highperf | ngl99"
-        power   = "highperf"
-        args    = @("--backend", "llama_cpp",
-                    "--llama-server", $LLAMA_SRV,
-                    "--llama-model", "gpt-oss:20b=$GPT_OSS",
-                    "--llama-ngl", "99", "--runs", $RUNS)
-    },
-    @{
-        id      = "llamacpp-qwen3.6-35b-highperf-ngl99"
-        label   = "llama.cpp | qwen3.6:35b-a3b | highperf | ngl99"
-        power   = "highperf"
-        args    = @("--backend", "llama_cpp",
-                    "--llama-server", $LLAMA_SRV,
-                    "--llama-model", "qwen3.6:35b-a3b=$QWEN35",
-                    "--llama-ngl", "99", "--runs", $RUNS)
-    },
-    # ── Ollama balanced (Vergleich zu highperf) ─────────────────────────────
-    @{
-        id      = "ollama-qwen3-coder-30b-balanced"
-        label   = "Ollama | qwen3-coder:30b | balanced"
-        power   = "balanced"
-        args    = @("--backend", "ollama", "--ollama-model", "qwen3-coder:30b", "--runs", $RUNS)
     }
 )
 
@@ -139,6 +157,81 @@ function Load-State {
 function Save-State([string[]]$done) {
     $null = New-Item -ItemType Directory -Force -Path (Split-Path $STATE_FILE)
     @{ done = $done; updated = (Get-Date -Format "yyyy-MM-dd HH:mm") } | ConvertTo-Json | Set-Content $STATE_FILE
+}
+
+function Get-LatestInProgressSnapshot([string]$resultsDir) {
+    $f = Get-ChildItem -Path $resultsDir -Filter "migration_llm_bench_*_inprogress.csv" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if (-not $f) { return $null }
+    return [pscustomobject]@{
+        Path          = $f.FullName
+        LastWriteUtc  = $f.LastWriteTimeUtc
+        Length        = [int64]$f.Length
+        Signature     = "{0}|{1}|{2}" -f $f.FullName, $f.LastWriteTimeUtc.Ticks, $f.Length
+    }
+}
+
+function Stop-ProcessTree([int]$RootPid) {
+    $all = New-Object System.Collections.Generic.List[int]
+    $q = New-Object System.Collections.Generic.Queue[int]
+    $q.Enqueue($RootPid)
+    while ($q.Count -gt 0) {
+        $pid = $q.Dequeue()
+        if ($all -contains $pid) { continue }
+        [void]$all.Add($pid)
+        $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $pid" -ErrorAction SilentlyContinue
+        foreach ($c in $children) {
+            $q.Enqueue([int]$c.ProcessId)
+        }
+    }
+    foreach ($pid in ($all | Sort-Object -Descending)) {
+        try {
+            Stop-Process -Id $pid -Force -ErrorAction Stop
+            Write-Host "  Watchdog: stopped PID $pid" -ForegroundColor Yellow
+        } catch {
+            # process may already be gone
+        }
+    }
+}
+
+function Invoke-BenchmarkRunWithWatchdog(
+    [string[]]$RunArgs,
+    [string]$BenchmarkId,
+    [int]$CheckSec,
+    [int]$StallMin
+) {
+    $argsList = @($BENCH) + @($RunArgs) + @("--benchmark-id", $BenchmarkId)
+    $proc = Start-Process -FilePath "python" -ArgumentList $argsList -WorkingDirectory $ROOT -NoNewWindow -PassThru
+    Write-Host "  Watchdog: monitoring PID $($proc.Id) (check ${CheckSec}s, stall ${StallMin}m)" -ForegroundColor DarkGray
+
+    $resultsDir = Join-Path $ROOT "benchmark_results"
+    $lastSignature = ""
+    $lastProgressAt = Get-Date
+    $nextCheck = (Get-Date).AddSeconds([Math]::Max($CheckSec, 10))
+
+    while (-not $proc.HasExited) {
+        Start-Sleep -Seconds 2
+        if ((Get-Date) -lt $nextCheck) { continue }
+        $nextCheck = (Get-Date).AddSeconds([Math]::Max($CheckSec, 10))
+
+        $snap = Get-LatestInProgressSnapshot -resultsDir $resultsDir
+        if ($snap -and $snap.Signature -ne $lastSignature) {
+            $lastSignature = $snap.Signature
+            $lastProgressAt = Get-Date
+            Write-Host ("  Watchdog: progress at {0:HH:mm:ss} ({1})" -f (Get-Date), (Split-Path $snap.Path -Leaf)) -ForegroundColor DarkGray
+        }
+
+        $idle = ((Get-Date) - $lastProgressAt).TotalMinutes
+        if ($idle -ge [Math]::Max($StallMin, 1)) {
+            Write-Host ("  Watchdog: no progress for {0:N1} min -> aborting stuck run." -f $idle) -ForegroundColor Red
+            Stop-ProcessTree -RootPid $proc.Id
+            return 124
+        }
+    }
+
+    $proc.WaitForExit()
+    return $proc.ExitCode
 }
 
 # ── Sondermodi ──────────────────────────────────────────────────────────────
@@ -164,17 +257,17 @@ if ($MarkDone) {
 
 # ── Status-Anzeige ──────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║        Lokale Benchmark-Kampagne — 11 Tasks, 3 Runs      ║" -ForegroundColor Cyan
-Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
+Write-Host "  Local benchmark campaign - benchmark: $BENCHMARK_ID | 3 runs" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
 $pending = 0
 foreach ($run in $ALL_RUNS) {
     if ($done -contains $run.id) {
-        Write-Host "  ✅ DONE   $($run.label)" -ForegroundColor Green
+        Write-Host "  DONE   $($run.label)" -ForegroundColor Green
     } else {
-        Write-Host "  ⏳ OFFEN  $($run.label)" -ForegroundColor Yellow
+        Write-Host "  OPEN   $($run.label)" -ForegroundColor Yellow
         $pending++
     }
 }
@@ -199,19 +292,18 @@ foreach ($run in $ALL_RUNS) {
     if ($done -contains $run.id) { continue }
 
     Write-Host ""
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+    Write-Host "----------------------------------------------------------" -ForegroundColor Cyan
     Write-Host "  ▶ $($run.label)" -ForegroundColor White
     $remaining = $pending - $completed
     Write-Host "  Noch $remaining Run(s) nach diesem | Start: $(Get-Date -Format 'HH:mm')" -ForegroundColor DarkGray
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+    Write-Host "----------------------------------------------------------" -ForegroundColor Cyan
 
     Set-Power $run.power
     Set-Location $ROOT
 
     $exitCode = 0
     try {
-        & python $BENCH @($run.args)
-        $exitCode = $LASTEXITCODE
+        $exitCode = Invoke-BenchmarkRunWithWatchdog -RunArgs @($run.args) -BenchmarkId $BENCHMARK_ID -CheckSec $WatchdogCheckSec -StallMin $WatchdogStallMin
     } catch {
         Write-Host "  FEHLER: $_" -ForegroundColor Red
         $exitCode = 1
@@ -221,10 +313,10 @@ foreach ($run in $ALL_RUNS) {
         $done += $run.id
         Save-State $done
         $completed++
-        Write-Host "  ✅ Abgeschlossen und gespeichert." -ForegroundColor Green
+        Write-Host "  Completed and saved." -ForegroundColor Green
     } else {
-        Write-Host "  ❌ Run fehlgeschlagen (exit $exitCode) — wird beim nächsten Start wiederholt." -ForegroundColor Red
-        Write-Host "  Kampagne wird fortgesetzt mit nächstem Run..." -ForegroundColor Yellow
+        Write-Host "  Run failed (exit $exitCode) - will retry on next start." -ForegroundColor Red
+        Write-Host "  Campaign continues with next run..." -ForegroundColor Yellow
     }
 }
 
@@ -233,12 +325,12 @@ powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e | Out-Null
 
 $elapsed = [math]::Round(((Get-Date) - $startTime).TotalMinutes, 1)
 Write-Host ""
-Write-Host "══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
 if ($pending -eq $completed) {
-    Write-Host "  🎉 Alle $completed Runs abgeschlossen in $elapsed Minuten!" -ForegroundColor Green
+    Write-Host "  All $completed runs completed in $elapsed minutes!" -ForegroundColor Green
 } else {
     $leftover = $pending - $completed
-    Write-Host "  $completed/$pending Runs abgeschlossen ($leftover fehlgeschlagen) | $elapsed min" -ForegroundColor Yellow
+    Write-Host ("  {0}/{1} runs completed ({2} failed) | {3} min" -f $completed, $pending, $leftover, $elapsed) -ForegroundColor Yellow
 }
 Write-Host "  State: $STATE_FILE" -ForegroundColor DarkGray
-Write-Host "══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan

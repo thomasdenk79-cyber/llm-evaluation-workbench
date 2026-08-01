@@ -1,0 +1,184 @@
+{
+  "benchmark_id": "swe-sql-hard-24",
+  "name": "swe-sql-hard-24",
+  "spec_version": "2026-07-26",
+  "scoring_profile": {
+    "mode": "swe_lite",
+    "pass_threshold": 85.0
+  },
+  "tasks": [
+    {
+      "id": "sql_tx_repair",
+      "title": "Transactional migration repair with savepoints",
+      "prompt": "You are fixing a broken migration script after partial deployment. Produce PostgreSQL 16 SQL only. Requirements: use BEGIN/COMMIT, per-table SAVEPOINT, rollback to savepoint on error, log failures into migration_audit(table_name, step, error_text, failed_at), continue processing next table. Tables: customers, orders, order_items, payments.",
+      "required_keywords": [
+        "begin",
+        "commit",
+        "savepoint",
+        "rollback to savepoint",
+        "migration_audit",
+        "insert into migration_audit",
+        "customers",
+        "orders",
+        "order_items",
+        "payments"
+      ],
+      "forbidden_keywords": [
+        "exception when others then null",
+        "dbms_",
+        "sql%rowcount",
+        "nvl(",
+        "decode(",
+        "rownum"
+      ]
+    },
+    {
+      "id": "sql_merge_to_upsert",
+      "title": "Oracle MERGE rewrite to ON CONFLICT",
+      "prompt": "Rewrite an Oracle MERGE for table invoice_summary into PostgreSQL 16 SQL only. Must use INSERT ... ON CONFLICT(invoice_id) DO UPDATE, preserve changed_at update only when amount differs, and include WHERE clause in DO UPDATE to avoid no-op writes.",
+      "required_keywords": [
+        "insert into invoice_summary",
+        "on conflict (invoice_id)",
+        "do update",
+        "excluded.",
+        "where",
+        "changed_at"
+      ],
+      "forbidden_keywords": [
+        "merge into",
+        "when matched then",
+        "when not matched then",
+        "decode(",
+        "nvl("
+      ]
+    },
+    {
+      "id": "sql_partition_conversion",
+      "title": "Range partition conversion with default partition",
+      "prompt": "Convert Oracle monthly range partitioned SALES table into PostgreSQL 16 declarative partitioning. Output SQL only. Include parent table, at least 3 monthly partitions for 2026-01..2026-03, default partition, matching indexes, and check constraints preserved.",
+      "required_keywords": [
+        "partition by range",
+        "create table sales_2026_01",
+        "create table sales_2026_02",
+        "create table sales_2026_03",
+        "default",
+        "for values from",
+        "for values to",
+        "create index"
+      ],
+      "forbidden_keywords": [
+        "partition by range (",
+        "local index",
+        "tablespace users",
+        "rownum",
+        "number("
+      ]
+    },
+    {
+      "id": "sql_jsonb_normalization",
+      "title": "JSONB migration with schema guards",
+      "prompt": "Write PostgreSQL 16 SQL only that migrates text column payload_raw to JSONB payload in events. Requirements: add payload JSONB if missing, safely cast valid JSON only, route invalid rows to events_quarantine with reason, add GIN index on payload, and keep operation idempotent.",
+      "required_keywords": [
+        "alter table events",
+        "jsonb",
+        "events_quarantine",
+        "where",
+        "jsonb_typeof",
+        "create index",
+        "using gin",
+        "on events"
+      ],
+      "forbidden_keywords": [
+        "exception when others then null",
+        "raise_application_error",
+        "dbms_",
+        "nvl("
+      ]
+    },
+    {
+      "id": "sql_window_reconciliation",
+      "title": "Window-based reconciliation query",
+      "prompt": "Create a PostgreSQL 16 reconciliation SQL only. For table ledger(tx_id, account_id, amount, posted_at), detect suspicious sequences: 3+ debits within 10 minutes exceeding 5000 total per account, and output account_id, first_tx, last_tx, total_amount, txn_count.",
+      "required_keywords": [
+        "with",
+        "window",
+        "over",
+        "partition by account_id",
+        "order by posted_at",
+        "sum(",
+        "count(",
+        "where",
+        "having"
+      ],
+      "forbidden_keywords": [
+        "rownum",
+        "connect by",
+        "model",
+        "decode("
+      ]
+    },
+    {
+      "id": "sql_trigger_chain",
+      "title": "Trigger chain conversion with deterministic order",
+      "prompt": "Generate PostgreSQL 16 SQL only for BEFORE INSERT and BEFORE UPDATE trigger logic on inventory that sets updated_at, updated_by, and enforces qty >= 0. Use separate trigger function(s), deterministic behavior, and explicit SECURITY DEFINER decision.",
+      "required_keywords": [
+        "create or replace function",
+        "returns trigger",
+        "language plpgsql",
+        "create trigger",
+        "before insert",
+        "before update",
+        "new.updated_at",
+        "new.updated_by",
+        "qty"
+      ],
+      "forbidden_keywords": [
+        ":new.",
+        ":old.",
+        "sys_context(",
+        "pragma",
+        "exception when others then null"
+      ]
+    },
+    {
+      "id": "sql_perf_refactor",
+      "title": "Performance rewrite for anti-pattern query",
+      "prompt": "Rewrite an Oracle-style correlated subquery report into performant PostgreSQL 16 SQL only. Must avoid per-row scalar subqueries, use CTEs or joins, support pagination and stable ordering, and include indexes recommendations as SQL comments.",
+      "required_keywords": [
+        "with",
+        "join",
+        "order by",
+        "limit",
+        "offset",
+        "/*",
+        "create index"
+      ],
+      "forbidden_keywords": [
+        "select (select",
+        "rownum",
+        "decode(",
+        "nvl("
+      ]
+    },
+    {
+      "id": "sql_online_backfill",
+      "title": "Online backfill with chunking",
+      "prompt": "Write PostgreSQL 16 SQL only for online backfill from orders_legacy to orders_new in chunks of 5000 rows by id range. Must be restart-safe, avoid duplicates, and track checkpoints in backfill_state(table_name, last_id, updated_at).",
+      "required_keywords": [
+        "backfill_state",
+        "insert into orders_new",
+        "on conflict",
+        "where",
+        "limit 5000",
+        "last_id",
+        "updated_at"
+      ],
+      "forbidden_keywords": [
+        "truncate",
+        "delete from orders_new",
+        "exception when others then null",
+        "dbms_lock"
+      ]
+    }
+  ]
+}

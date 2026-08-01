@@ -7,7 +7,7 @@ Zentrale Sammlung und strukturierte Ausfuehrungsbasis fuer lokale LLM-Benchmarks
 
 - Einheitliche, reproduzierbare Benchmarks fuer lokale Modelle.
 - Vergleich Ollama vs llama.cpp mit gleichen oder vergleichbaren Parametern.
-- Bewertung mit Qualitaets-Score, Laufzeit, Tokens/s sowie CPU/GPU/VRAM-Metriken.
+- Bewertung mit Heuristik-Score (keyword/rule-basiert), Laufzeit, Tokens/s sowie CPU/GPU/VRAM-Metriken.
 - Vergleich unter unterschiedlichen Windows-Energieprofilen.
 
 ## Struktur
@@ -66,7 +66,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 `
 ## Hinweise
 
 - Fuer konsistente Vergleiche immer gleiche Prompts, Seeds und Sampling-Settings nutzen.
-- Bei starken Score-Abweichungen zwischen Backends zuerst Parametergleichheit pruefen.
+- Bei starken Heuristik-Score-Abweichungen zwischen Backends zuerst Parametergleichheit pruefen.
 - Aktive VSCode/Ollama/andere Last kann Messergebnisse verfälschen.
 
 ## Automation

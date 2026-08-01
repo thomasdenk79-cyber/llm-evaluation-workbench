@@ -6,8 +6,16 @@ __pycache__/
 .venv/
 venv/
 benchmark_results/
+benchmark_results_*/
 .env
 *.token
 *_token.txt
 
 site/
+
+# Local report variants produced by resume/chaos smoke runs.
+docs/project/benchmark_report_chaos_local*
+docs/project/benchmark_report_interactive*
+docs/project/benchmark_report_live*
+docs/project/benchmark_report_resume_test*
+open_code_mobaxterm_fix.txt

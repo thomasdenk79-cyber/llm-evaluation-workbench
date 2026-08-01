@@ -1,0 +1,167 @@
+{
+  "benchmark_id": "swe-python-hard-24",
+  "name": "swe-python-hard-24",
+  "spec_version": "2026-07-26",
+  "scoring_profile": {
+    "mode": "swe_lite",
+    "pass_threshold": 85.0
+  },
+  "tasks": [
+    {
+      "id": "py_streaming_checksum",
+      "title": "Streaming checksum reconciler",
+      "prompt": "Write Python 3.11 code only: function reconcile_checksums(src_iter, dst_iter) that compares two sorted streams of (pk, checksum) without loading all rows into memory. Return dict with missing_in_src, missing_in_dst, mismatched lists. Use iterators and O(1) extra memory.",
+      "required_keywords": [
+        "def reconcile_checksums",
+        "while",
+        "next(",
+        "StopIteration",
+        "missing_in_src",
+        "missing_in_dst",
+        "mismatched",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "pandas",
+        "read_csv",
+        ".to_list(",
+        "cx_Oracle"
+      ]
+    },
+    {
+      "id": "py_retry_deadlock",
+      "title": "Deadlock-aware retry executor",
+      "prompt": "Write Python code only for execute_with_retry(fn, max_attempts=5). Retries only deadlock/serialization errors with exponential backoff + jitter, preserves original traceback on final failure, and logs structured events.",
+      "required_keywords": [
+        "def execute_with_retry",
+        "for",
+        "range(",
+        "sleep",
+        "random",
+        "raise",
+        "max_attempts",
+        "except"
+      ],
+      "forbidden_keywords": [
+        "except Exception: pass",
+        "while True",
+        "print("
+      ]
+    },
+    {
+      "id": "py_idempotent_runner",
+      "title": "Idempotent migration runner",
+      "prompt": "Write Python code only for class MigrationRunner using table schema_migrations(version text primary key, applied_at timestamptz, checksum text). Implement methods: should_apply, apply, verify_checksum, run_all. Enforce idempotency and checksum mismatch protection.",
+      "required_keywords": [
+        "class MigrationRunner",
+        "def should_apply",
+        "def apply",
+        "def verify_checksum",
+        "def run_all",
+        "schema_migrations",
+        "checksum",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "except: pass",
+        "global ",
+        "cx_Oracle"
+      ]
+    },
+    {
+      "id": "py_ast_sql_rewrite",
+      "title": "AST-based SQL rewrite helper",
+      "prompt": "Write Python code only for rewrite_oracle_sql(sql: str) -> str that uses token/AST-style transformations (no blind replace chain) to convert NVL->COALESCE, SYSDATE->CURRENT_TIMESTAMP, and ROWNUM filters to LIMIT when safe.",
+      "required_keywords": [
+        "def rewrite_oracle_sql",
+        "sql",
+        "coalesce",
+        "current_timestamp",
+        "limit",
+        "return",
+        "re."
+      ],
+      "forbidden_keywords": [
+        ".replace(\"NVL",
+        ".replace('NVL",
+        "except Exception: pass"
+      ]
+    },
+    {
+      "id": "py_batch_copy",
+      "title": "High-throughput batch copy",
+      "prompt": "Write Python code only for copy_table_in_batches(oracle_conn, pg_conn, table_name, batch_size=5000). Fetch Oracle rows with arraysize tuning, insert into PostgreSQL with execute_values, commit per batch, and return rows_copied + timing stats.",
+      "required_keywords": [
+        "def copy_table_in_batches",
+        "batch_size",
+        "arraysize",
+        "execute_values",
+        "commit",
+        "rows_copied",
+        "time.perf_counter"
+      ],
+      "forbidden_keywords": [
+        "fetchall()",
+        "except: pass",
+        "cx_Oracle"
+      ]
+    },
+    {
+      "id": "py_schema_diff",
+      "title": "Deterministic schema diff engine",
+      "prompt": "Write Python code only for diff_schema(src_cols, dst_cols) returning ordered patch actions add/alter/drop. Must be deterministic, case-insensitive on identifiers, and preserve stable output order for CI snapshots.",
+      "required_keywords": [
+        "def diff_schema",
+        "sorted(",
+        "lower()",
+        "add",
+        "alter",
+        "drop",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "set(",
+        "random",
+        "except Exception: pass"
+      ]
+    },
+    {
+      "id": "py_validation_report",
+      "title": "Validation report builder",
+      "prompt": "Write Python code only for build_validation_report(results) that computes pass rate, p95 runtime, top 10 failures grouped by error signature, and outputs a markdown string table.",
+      "required_keywords": [
+        "def build_validation_report",
+        "pass_rate",
+        "p95",
+        "group",
+        "markdown",
+        "|",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "pandas",
+        "matplotlib",
+        "except: pass"
+      ]
+    },
+    {
+      "id": "py_safe_parallelism",
+      "title": "Bounded parallel executor",
+      "prompt": "Write Python code only for run_parallel(tasks, worker_fn, max_workers=8) using ThreadPoolExecutor with bounded retries, timeout handling, and preserving input order in returned results.",
+      "required_keywords": [
+        "def run_parallel",
+        "ThreadPoolExecutor",
+        "max_workers",
+        "as_completed",
+        "timeout",
+        "results",
+        "return"
+      ],
+      "forbidden_keywords": [
+        "multiprocessing.Pool",
+        "except: pass",
+        "while True"
+      ]
+    }
+  ]
+}

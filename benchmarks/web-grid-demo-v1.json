@@ -1,0 +1,85 @@
+{
+  "benchmark_id": "web-grid-demo-v1",
+  "name": "Standalone 50k web grid demo",
+  "spec_version": "2026-08-01",
+  "scoring_profile": {
+    "mode": "swe_lite",
+    "pass_threshold": 85.0
+  },
+  "tasks": [
+    {
+      "id": "standalone_grid_50k",
+      "title": "Build a standalone 50k HTML grid",
+      "prompt": "Return one complete standalone HTML document only (no explanation, no Markdown fences). Build a visually exceptional, presentation-ready TaskVision grid demo using only HTML, CSS and vanilla JavaScript, with no external libraries or network calls. It must look like a premium modern 2026 web application suitable for showing to engineering colleagues: strong visual hierarchy, refined dark/light color system, gradients or glass effects used tastefully, animated metric cards, polished hover/focus states, smooth transitions, status badges, responsive layout and excellent typography. Generate exactly 50,000 deterministic task records in the browser with fields taskId, summary, service, status, assignee, archived and updatedAt. Requirements: virtualized or paginated rendering so no more than the selected page size is in the DOM; selectable limits 50, 100, 1000, 5000 and 50000; default hide archived with a checkbox to include them; global text filter; group-by selector for none/service/status; column chooser allowing columns to be hidden and shown; sortable columns; visible metrics for data generation time, filtering/grouping time, render time and visible/total row counts. Preserve state while switching controls. Use textContent/createElement instead of inserting task data with innerHTML. Include accessible labels and keyboard focus styles, and a clear note when rendering 50,000 DOM rows may be expensive. Make the result genuinely impressive rather than a generic admin table.",
+      "required_keywords": [
+        "<!doctype html",
+        "<style",
+        "<script",
+        "50000",
+        "performance.now",
+        "textcontent",
+        "createelement",
+        "archived",
+        "group",
+        "filter",
+        "column",
+        "service",
+        "status",
+        "assignee",
+        "updatedat",
+        [
+          "50, 100, 1000, 5000, 50000",
+          "[50,100,1000,5000,50000]",
+          "[50, 100, 1000, 5000, 50000]"
+        ],
+        [
+          "generation",
+          "generate"
+        ],
+        [
+          "render time",
+          "renderzeit",
+          "render ms"
+        ],
+        [
+          "visible",
+          "sichtbar"
+        ],
+        [
+          "sort(",
+          "sortkey",
+          "sortcolumn"
+        ],
+        [
+          "aria-label",
+          "<label"
+        ],
+        [
+          "@media",
+          "responsive"
+        ],
+        [
+          ":hover",
+          "hover"
+        ],
+        [
+          "transition:",
+          "animation:"
+        ],
+        [
+          "gradient",
+          "backdrop-filter"
+        ]
+      ],
+      "forbidden_keywords": [
+        "fetch(",
+        "xmlhttprequest",
+        "document.write(",
+        "eval(",
+        "onclick=\"",
+        "todo:",
+        "placeholder implementation"
+      ]
+    }
+  ]
+}

@@ -10,6 +10,50 @@
 
 ## Aktueller Stand
 
+### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Serial-Pilot-Crash-Fix (kein Live-Modell)
+
+- Ein realer serieller Pilot (`agent-helper-serial-pilot-20260801`,
+  `qwen3-coder:30b`) stürzte während des Mini-Gates ab: das
+  Arbeitsverzeichnis (`mini_task_work/<voller sample_id>`) war 226 Zeichen
+  lang, `subprocess.run(cwd=...)` warf unter Windows
+  `NotADirectoryError: [WinError 267]`, die Exception propagierte
+  ungefangen bis zum Absturz — **ohne** persistierte Probe oder
+  Checkpoint für diesen Versuch.
+- **Fix 1:** neues `live_gates._short_work_dir_name(sample_id)` →
+  `sha256(sample_id)[:16]`, ein fester 16-Hex-Zeichen-Name unabhängig von
+  Kampagne-/Modell-/Task-ID-Länge. Der volle `sample_id` bleibt im
+  Artefakt-JSON erhalten.
+- **Fix 2:** ein Gate-Boundary-Exception-Sicherheitsnetz in beiden echten
+  Gates (`run_ollama_connect_gate`/`run_ollama_mini_gate`) — jede
+  unerwartete Exception nach dem echten HTTP-Aufruf wird jetzt immer als
+  schema-valide `status="error"`/`acceptance_status="not_usable"`-Probe
+  (`system_error_code="GATE_BOUNDARY_UNEXPECTED_EXCEPTION"`) persistiert
+  statt die Session abstürzen zu lassen.
+- **Fix 3:** ein atomarer Checkpoint **vor** jedem Gate-Aufruf
+  (zusätzlich zum bestehenden danach), neuer Parameter/Flag
+  `halt_on_gate_exception`/`--halt-on-gate-exception` (Default: Kampagne
+  läuft nach einem Gate-Boundary-Vorfall weiter), sowie ein Retry-mit-
+  Backoff um den atomaren Checkpoint-`os.replace()` (transiente Windows-
+  `PermissionError` unter erhöhter Schreibfrequenz behoben).
+- Resume für den exakten realen DB-Zustand (ein akzeptiertes Connect-Gate,
+  kein Mini-Gate) verifiziert: Connect-Gate wird übersprungen
+  (`"resumed"`), nur das fehlende Mini-Gate plus die drei noch nie
+  versuchten Modelle laufen. Die reale Kampagnen-Evidenz (gitignored)
+  wurde nicht verändert/gelöscht.
+- **10 neue Regressionstests, 273/273 bestehen** (vorher 263), über 10
+  volle Testläufe gegen Flakiness verifiziert. Keine Abhängigkeiten
+  installiert; kein Live-Modell-/Netzwerkaufruf.
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  §18, `docs\operations\runbook.md` §8, `docs\project\changelog.md`
+  (Eintrag "Serial-Pilot-Crash-Fix").
+- **Exakter Wiederaufnahme-Befehl für den Parent-Agent:**
+  ```powershell
+  cd C:\GIT\llm-evaluation-workbench\scripts
+  python .\run_agent_helper_campaign.py serial-execute `
+    --campaign-id agent-helper-serial-pilot-20260801 --confirm `
+    --models "qwen3-coder:30b,deepseek-coder-v2:16b,phi4-mini:3.8b-q4_K_M,rnj-1:8b"
+  ```
+
 ### Stand: 2026-08-03 — Agent-Helper-Evaluation-Track: Ollama-Inventar-Discovery + serieller Gate-Runner (kein Live-Modell)
 
 - Zwei neue Module, beide reine Discovery-/Orchestrierungslogik ohne

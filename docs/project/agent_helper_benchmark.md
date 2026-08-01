@@ -1484,3 +1484,199 @@ pair that already has a persisted sample and continues with the rest —
 `serial_progress.json` in the campaign directory records exactly how far
 the previous run got. To deliberately redo one specific model despite an
 existing sample, add `--force-rerun "<that-tag>"`.
+
+## 18. Serial-pilot crash fix: long-path workspace, gate-boundary exception safety net, pre-gate checkpoints
+
+A real serial pilot (`agent-helper-serial-pilot-20260801`,
+`qwen3-coder:30b`) crashed the whole parent process during the mini gate,
+with **no persisted sample and no checkpoint** recorded for the failed
+attempt. This section documents the root cause and the fix — no model was
+called while building/testing it; every scenario below is reproduced with
+mocked exceptions/transports.
+
+### 18.1 Root cause
+
+`run_ollama_mini_gate()`'s subprocess working directory was
+`mini_task_work/<full sample_id>` — `sample_id` slugs together the
+campaign id, model tag, task id, track, and a timestamp, and reached 226
+characters in the real run. `subprocess.run(..., cwd=work_dir)` raised
+`NotADirectoryError: [WinError 267]` ("The directory name is invalid") —
+a known Windows quirk where `CreateProcess`'s cwd validation can fail on
+long paths even nominally under the classic 260-character `MAX_PATH`,
+especially once a filename is appended inside it (243 characters here).
+This call happened **after** the model had already been unloaded (the
+`with local_lock.local_model_slot(...)` block had already exited), so the
+exception propagated completely uncaught: out of `run_ollama_mini_gate`,
+past `serial_campaign._run_one_gate_with_retry` (which only caught
+`LiveGateRefusedError`), out of the per-model loop, crashing the whole
+CLI process. Because no `SampleRecord` had been built yet at the point of
+the crash, nothing was persisted — the real campaign directory shows an
+orphaned `mini_task_work/<226-char-dir>/{solution.py,test_solution.py}`
+with no corresponding SQLite row.
+
+### 18.2 Fix 1 — short, hashed mini-task workspace directory
+
+`live_gates._short_work_dir_name(sample_id)` returns
+`hashlib.sha256(sample_id.encode()).hexdigest()[:16]` — a fixed
+16-character, deterministic, collision-safe name, independent of how long
+campaign/model/task identifiers are. `run_ollama_mini_gate()`'s work_dir is
+now `mini_task_work/<16-hex-char hash>` instead of
+`mini_task_work/<full sample_id>`. The full `sample_id` (and the relative
+`work_dir` path) is still recorded in the mini-gate's artifact JSON
+(`sample_id`/`work_dir` keys), so which attempt produced which workspace
+is never lost — only the on-disk *path length* changed.
+
+### 18.3 Fix 2 — gate-boundary exception safety net
+
+Both `run_ollama_connect_gate()` and `run_ollama_mini_gate()` now wrap
+their entire post-generate scoring/artifact/persistence block in a
+`try`/`except Exception`. Any unexpected exception there (a workspace/
+subprocess error, a scoring bug, an artifact-write failure, ...) is caught
+by `_build_gate_exception_sample()`, which builds a complete,
+schema-valid `SampleRecord` instead of letting the exception propagate:
+
+- `status="error"`, `system_error_flag=True`,
+  `system_error_code="GATE_BOUNDARY_UNEXPECTED_EXCEPTION"`
+  (`live_gates.GATE_BOUNDARY_EXCEPTION_ERROR_CODE`).
+- `acceptance_status` is computed via the same
+  `rubric.compute_sample_acceptance(status="error", ...)` every other
+  sample goes through — this unconditionally yields `"not_usable"`, so a
+  mid-scoring crash can never be mistaken for an accepted result.
+- Every phase-timing/score field (`deterministic_score`, `reviewer_score`,
+  `prompt_eval_seconds`, `generation_seconds`, `test_exec_seconds`, ...)
+  is left `None` — never fabricated. `elapsed_seconds` is an honest
+  lower-bound wall-clock measurement of the time actually spent before the
+  exception.
+- The fallback artifact write is itself wrapped in a nested
+  `try`/`except`: if even that fails, `artifact_path`/`artifact_hash`
+  degrade to `None` rather than raising a second, unhandled exception that
+  would defeat the whole safety net.
+- The gate function always returns a normal `LiveGateResult` and always
+  persists this sample through the same SQLite/CSV/report pipeline as any
+  other attempt — a single unexpected task exception can never again erase
+  evidence of an attempt or crash a calling serial-campaign runner.
+
+`run_ollama_generate`'s own `finally`-block unload guarantee is unaffected
+(the new try/except only wraps code that runs *after* that block has
+already completed).
+
+### 18.4 Fix 3 — pre-gate checkpoints + explicit continue/halt policy
+
+`serial_campaign.run_serial_campaign()` now writes an atomic JSON
+checkpoint **immediately before** calling the connect gate and again
+**immediately before** calling the mini gate (`in_progress={"model": ...,
+"gate": "connect"|"mini"}`), in addition to the existing after-every-step
+checkpoint. A hard crash or `Ctrl-C` mid-attempt now always leaves a
+checkpoint on disk showing exactly which (model, gate) step was in
+flight — this closes the exact gap the real pilot hit (no checkpoint
+existed at all for the crashed mini-gate attempt).
+
+A new `halt_on_gate_exception` parameter (default `False`, CLI:
+`--halt-on-gate-exception`) controls what happens when a gate function's
+own gate-boundary safety net fires (`system_error_code ==
+GATE_BOUNDARY_EXCEPTION_ERROR_CODE`):
+
+- **Default (`False`, continue):** the campaign moves on to the next
+  model — a single model's workspace/scoring hiccup does not imply every
+  other model will fail the same way, unlike a preflight/lock refusal
+  which likely recurs. The failed sample and a checkpoint are persisted
+  identically either way; this flag only decides whether to keep going.
+- **`True` (halt):** the campaign stops after that model, exactly like a
+  preflight refusal, for an operator who wants to investigate before
+  burning more model time. `SerialCampaignResult.halted_on_gate_exception`
+  and the checkpoint's `halted_on_gate_exception` key both reflect this.
+
+`_write_checkpoint()` also gained a short bounded retry-with-backoff
+around the atomic `os.replace()` rename: on Windows this can transiently
+raise `PermissionError: [WinError 5]` ("Access is denied") if
+antivirus/indexing briefly holds a handle open on the just-written temp
+file, which became more likely once checkpoints are written more often
+(before *and* after each gate). The rename itself is still a single
+atomic syscall; only the decision to retry a failed attempt is new.
+
+### 18.5 Resume semantics for the exact real-pilot state (verified)
+
+The real campaign's SQLite DB holds exactly one row: an **accepted**
+connect-gate sample for `qwen3-coder:30b` — no mini-gate sample at all
+(the crash happened before one could be built). Re-running
+`serial-execute` with the same `--campaign-id`/`--models` list and resume
+enabled (the default) is verified (`test_resume_after_real_pilot_exact_
+state_reruns_only_missing_mini_gate`) to:
+
+1. Recognize the existing accepted connect-gate sample and record a
+   `"resumed"` step for it — the connect gate is **not** re-attempted.
+2. Attempt only the missing mini gate for `qwen3-coder:30b` — now using
+   the short hashed work_dir, and safe against a repeat crash regardless
+   of cause.
+3. Continue on to the remaining plan (`deepseek-coder-v2:16b`,
+   `phi4-mini:3.8b-q4_K_M`, `rnj-1:8b`, per `serial_plan.json`), none of
+   which had been attempted yet.
+
+The real campaign's evidence directory
+(`benchmark_results\agent-helper\agent-helper-serial-pilot-20260801\`,
+gitignored) — including the accepted connect-gate sample and the orphaned
+`mini_task_work` directory from the crash — was **not modified, repaired,
+or deleted** while building/testing this fix; it remains exactly as the
+pilot left it, ready to be resumed.
+
+### 18.6 New regression tests
+
+10 new tests, all fast/deterministic/no-network (273 total, up from 263):
+
+- `test_short_work_dir_name_is_short_and_deterministic_for_long_sample_id`
+  — a 100+ character synthetic `sample_id` (mirroring the real 226-char
+  case) collapses to a fixed 16-hex-character, deterministic name.
+- `test_mini_gate_uses_short_hashed_work_dir_regardless_of_long_identifiers`
+  — end-to-end through `run_ollama_mini_gate()` with deliberately long
+  campaign/model identifiers, capturing the actual `work_dir` passed to
+  `mini_task.run_mini_task_tests()` and asserting it stays short.
+- `test_mini_gate_workspace_exception_is_persisted_not_usable_not_raised`
+  — mocks `mini_task.run_mini_task_tests` to raise the *exact*
+  `NotADirectoryError` Windows raised in the real incident; asserts
+  `run_ollama_mini_gate()` returns normally with a persisted
+  `status="error"`/`acceptance_status="not_usable"` sample instead of
+  raising.
+- `test_connect_gate_boundary_exception_is_persisted_not_usable_not_raised`
+  — same safety net, connect-gate path (mocks
+  `ollama_client.tokens_per_second` to raise).
+- `test_pre_gate_checkpoint_is_written_before_connect_gate_call_starts` /
+  `..._before_mini_gate_call_starts` — a fake gate function reads the
+  checkpoint file from disk *when it is called* and asserts `in_progress`
+  is already populated for that (model, gate).
+- `test_gate_boundary_exception_is_persisted_and_campaign_continues_by_default`
+  / `test_halt_on_gate_exception_true_stops_campaign_early` — the
+  continue-by-default vs. explicit-halt policy.
+- `test_resume_after_real_pilot_exact_state_reruns_only_missing_mini_gate`
+  — reproduces the exact real DB state (one accepted connect-gate sample,
+  no mini-gate sample) and asserts resume reruns only the missing mini
+  gate.
+- `test_checkpoint_retries_transient_windows_replace_failure` — injects a
+  first-attempt `PermissionError`, verifies the bounded backoff, and confirms
+  that the second atomic replace persists the complete checkpoint.
+
+All 273 tests pass (`python -m unittest test_agent_helper_eval -v` from
+`scripts/`), verified across 10 consecutive full-suite runs to rule out
+flakiness (a transient Windows checkpoint-rename `PermissionError` was
+found and fixed as part of this verification — see §18.4). No live model,
+live Ollama discovery call, or network call was made at any point while
+building/testing this phase.
+
+### 18.7 Exact remediation/rerun command for the parent agent
+
+```powershell
+cd C:\GIT\llm-evaluation-workbench\scripts
+
+# Resume the exact same real serial pilot: the connect-gate sample already
+# accepted for qwen3-coder:30b is recognized and skipped; only its missing
+# mini gate is attempted, followed by the three models never yet attempted.
+python .\run_agent_helper_campaign.py serial-execute `
+  --campaign-id agent-helper-serial-pilot-20260801 --confirm `
+  --models "qwen3-coder:30b,deepseek-coder-v2:16b,phi4-mini:3.8b-q4_K_M,rnj-1:8b"
+```
+
+No flags need to change from whatever the original pilot used — resume is
+on by default, and the fix is entirely inside the gate functions and the
+checkpoint writer. Add `--halt-on-gate-exception` only if the parent agent
+wants the campaign to stop for manual inspection the next time a gate
+hits its exception safety net, instead of the default (persist the failed
+sample and continue to the next model).

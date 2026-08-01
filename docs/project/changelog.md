@@ -1,5 +1,85 @@
 # Changelog
 
+## 2026-08-01 — Agent-Helper-Evaluation-Track: Serial-Pilot-Crash-Fix (kein Live-Modell)
+
+- **Auftrag:** einen realen seriellen Pilot-Absturz reproduzieren/beheben,
+  ohne selbst ein Modell aufzurufen. Evidenz: Kampagne
+  `agent-helper-serial-pilot-20260801`, Modell `qwen3-coder:30b` — das
+  Mini-Gate-Arbeitsverzeichnis (`mini_task_work/<voller sample_id>`) war
+  226 Zeichen lang, `subprocess.run(cwd=...)` warf unter Windows
+  `NotADirectoryError: [WinError 267]` ("Der Verzeichnisname ist
+  ungültig"). Der Fehler geschah **nach** dem bereits abgeschlossenen
+  Entladen des Modells und propagierte komplett ungefangen bis zum
+  Absturz des ganzen Parent-Prozesses — **keine** Probe und **kein**
+  Checkpoint wurden für diesen Versuch persistiert.
+- **Fix 1 — kurzes, gehashtes Arbeitsverzeichnis:** neue
+  `live_gates._short_work_dir_name(sample_id)` liefert
+  `sha256(sample_id)[:16]` — ein fester 16-Hex-Zeichen-Name, unabhängig
+  von der Länge von Kampagne-/Modell-/Task-IDs.
+  `run_ollama_mini_gate()`'s `work_dir` ist jetzt
+  `mini_task_work/<Hash>` statt `mini_task_work/<voller sample_id>`; der
+  volle `sample_id` bleibt im Artefakt-JSON erhalten (`sample_id`/
+  `work_dir`-Felder) — nur die Pfadlänge auf der Platte ändert sich.
+- **Fix 2 — Gate-Boundary-Exception-Sicherheitsnetz:** beide echten Gates
+  (`run_ollama_connect_gate`/`run_ollama_mini_gate`) fangen jetzt jede
+  unerwartete Exception nach dem echten HTTP-Aufruf in einem
+  `try`/`except` ab. `_build_gate_exception_sample()` baut daraus immer
+  eine vollständige, schema-valide `SampleRecord`
+  (`status="error"`, `system_error_code=
+  "GATE_BOUNDARY_UNEXPECTED_EXCEPTION"`, `acceptance_status` über
+  dieselbe `rubric.compute_sample_acceptance(status="error", ...)` wie
+  jede andere Probe — erzwingt immer `"not_usable"`; alle Phasen-/Score-
+  Felder bleiben ehrlich `None`) statt die Exception weiterzureichen. Die
+  Gate-Funktion gibt immer ein normales `LiveGateResult` zurück und
+  persistiert diese Probe über dieselbe SQLite/CSV/Report-Pipeline wie
+  jeder andere Versuch.
+- **Fix 3 — Pre-Gate-Checkpoints + explizite Continue-/Halt-Policy:**
+  `serial_campaign.run_serial_campaign()` schreibt jetzt einen atomaren
+  Checkpoint (`in_progress={"model": ..., "gate": "connect"|"mini"}`)
+  **unmittelbar vor** jedem Gate-Aufruf, zusätzlich zum bestehenden
+  Checkpoint danach — schließt genau die Lücke, die der reale Pilot traf
+  (kein Checkpoint existierte für den abgestürzten Mini-Gate-Versuch).
+  Neuer Parameter `halt_on_gate_exception` (Default `False`, CLI:
+  `--halt-on-gate-exception`): standardmäßig läuft die Kampagne nach
+  einem Gate-Boundary-Exception-Vorfall zum nächsten Modell weiter (ein
+  Workspace-/Scoring-Problem eines Modells impliziert nicht, dass jedes
+  andere Modell genauso scheitert); `True` stoppt die Kampagne stattdessen
+  wie bei einer Preflight-Verweigerung. `_write_checkpoint()` erhielt
+  zusätzlich einen kurzen begrenzten Retry-mit-Backoff um das atomare
+  `os.replace()` — unter Windows kann dieses transient
+  `PermissionError: [WinError 5]` werfen, wenn Antivirus/Indexierung kurz
+  einen Handle auf der frisch geschriebenen Temp-Datei hält (in der
+  eigenen Testsuite beobachtet, nachdem Pre-Gate-Checkpoints die
+  Schreibfrequenz erhöht hatten).
+- **Resume für den exakten realen Zustand verifiziert:** die reale
+  Kampagnen-Datenbank enthält genau eine Zeile — ein akzeptiertes
+  Connect-Gate für `qwen3-coder:30b`, kein Mini-Gate. Ein neuer Test
+  (`test_resume_after_real_pilot_exact_state_reruns_only_missing_mini_gate`)
+  reproduziert exakt diesen Zustand und bestätigt: Connect-Gate wird als
+  `"resumed"` erkannt (nicht erneut aufgerufen), nur das fehlende Mini-Gate
+  wird versucht, danach laufen die drei noch nie versuchten Modelle
+  (`deepseek-coder-v2:16b`, `phi4-mini:3.8b-q4_K_M`, `rnj-1:8b`) weiter.
+- **Reale Kampagnen-Evidenz unverändert:**
+  `benchmark_results\agent-helper\agent-helper-serial-pilot-20260801\`
+  (gitignored) — inklusive der akzeptierten Connect-Gate-Probe und des
+  verwaisten `mini_task_work`-Verzeichnisses aus dem Absturz — wurde beim
+  Bauen/Testen dieses Fixes nicht verändert, repariert oder gelöscht.
+- **10 neue, schnelle, deterministische Regressionstests** (273/273
+  bestehen, vorher 263): Hash-Kürzung des Arbeitsverzeichnisses (isoliert
+  + end-to-end mit langen Identifiern); Gate-Boundary-Exception-
+  Sicherheitsnetz für beide Gates (gemockte `NotADirectoryError` bzw.
+  `RuntimeError` nach dem echten HTTP-Aufruf); Pre-Gate-Checkpoints vor
+  Connect- und vor Mini-Gate; Continue-by-Default- und expliziter-Halt-
+  Pfad bei einer Gate-Boundary-Exception; und der reale Resume-Zustand
+  oben. Über 10 aufeinanderfolgende volle Testläufe verifiziert, um
+  Flakiness auszuschließen (dabei die transiente Windows-Checkpoint-
+  Rename-`PermissionError` gefunden und mit Fix 3 behoben). Kein
+  Live-Modell- oder Netzwerkaufruf in diesem Zyklus. Der zusätzliche
+  Checkpoint-Test verifiziert den transienten `PermissionError`, den
+  Backoff und den danach erfolgreichen atomaren Replace.
+- Details/volle Spezifikation: `docs\project\agent_helper_benchmark.md`
+  §18, `docs\operations\runbook.md` §8.
+
 ## 2026-08-03 — Agent-Helper-Evaluation-Track: Ollama-Inventar-Discovery + serieller Gate-Runner (kein Live-Modell)
 
 - **Auftrag:** robuste lokale Ollama-Inventar-Discovery plus ein strikt

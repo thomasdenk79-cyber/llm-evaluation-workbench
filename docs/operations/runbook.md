@@ -242,9 +242,9 @@ ausgeführt, nur vom Parent-Agent/Menschen manuell):
 cd C:\GIT\llm-evaluation-workbench\scripts
 
 # Voraussetzung: `ollama serve` läuft lokal und --model ist bereits
-# gepullt/verfügbar. Erzwingt Preflight (`ollama ps`) + Filesystem-Lock
-# (max. ein lokales Modell); lädt danach IMMER mit keep_alive=0 wieder aus
-# (finally-Block, auch bei Fehler/Timeout).
+# gepullt/verfügbar. Wartet standardmäßig bis zu 3600 Sekunden auf die
+# gemeinsame Workspace-Lease `local-llm`, prüft danach `ollama ps` und lädt
+# IMMER mit keep_alive=0 wieder aus (finally-Block, auch bei Fehler/Timeout).
 python .\run_agent_helper_campaign.py connect-gate-run `
   --campaign-id live-<datum> --model qwen3-coder:30b
 
@@ -258,8 +258,11 @@ python .\run_agent_helper_campaign.py mini-gate-run `
 ```
 
 Beide Befehle sind bewusst **One-Shot**: eine Korrektur-/Folge-Iteration ist
-ein separater, später Befehl. Eine Preflight-/Lock-Verweigerung (z. B. ein
-bereits geladenes Fremdmodell) druckt
+ein separater, später Befehl. `--local-lease-wait-seconds` steuert das
+begrenzte Warten auf die kanonische Lease in
+`C:\GIT\standards\scripts\local_model_lease.py`. Erst ein Wait-Timeout,
+Lockfehler oder eine Preflight-Verweigerung (z. B. ein bereits geladenes
+Fremdmodell) druckt
 `REFUSED (nothing attempted, nothing persisted): <Grund>`, gibt Exit-Code
 `2` zurück und persistiert **keine** Zeile — nichts wurde versucht. Ein
 echter, fehlgeschlagener oder Timeout-behafteter Versuch wird dagegen
@@ -300,7 +303,7 @@ unterbrochener/abgestürzter Lauf überspringt beim erneuten Ausführen
 desselben Befehls jedes (Modell, Task)-Paar mit bereits persistierter
 Probe (Erfolg, Fehlschlag oder Timeout) und macht mit dem Rest weiter --
 `serial_progress.json` in der Kampagne protokolliert nach jedem einzelnen
-Schritt atomar den Fortschritt. Eine Preflight-/Lock-Verweigerung stoppt
+Schritt atomar den Fortschritt. Eine Preflight-/Lease-Verweigerung stoppt
 standardmäßig die gesamte Serie (`--continue-on-refusal` für bewusstes
 Fortsetzen); Retries (`--max-retries`, Default `0`) gelten ausschließlich
 für einen transienten `status=error`, nie für Timeout oder eine

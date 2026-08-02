@@ -143,6 +143,7 @@ from agent_helper_eval import (
     catalog,
     historical_adapter,
     live_gates,
+    local_lock,
     ollama_client,
     ollama_inventory,
     orchestrator,
@@ -316,6 +317,7 @@ def _cmd_connect_gate_run(args: argparse.Namespace) -> int:
         hardware_profile=args.hardware_profile,
         hardware_gpu_model=args.hardware_gpu_model,
         hardware_vram_total_mb=args.hardware_vram_total_mb,
+        lock_wait_seconds=args.local_lease_wait_seconds,
     )
     if args.keep_alive is not None:
         kwargs["keep_alive"] = args.keep_alive
@@ -343,6 +345,7 @@ def _cmd_mini_gate_run(args: argparse.Namespace) -> int:
         hardware_profile=args.hardware_profile,
         hardware_gpu_model=args.hardware_gpu_model,
         hardware_vram_total_mb=args.hardware_vram_total_mb,
+        lock_wait_seconds=args.local_lease_wait_seconds,
     )
     if args.keep_alive is not None:
         kwargs["keep_alive"] = args.keep_alive
@@ -553,6 +556,12 @@ def _add_live_gate_common_arguments(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--hardware-profile", default=None, help="Operator-declared hardware profile label (never inferred/fabricated).")
     subparser.add_argument("--hardware-gpu-model", default=None)
     subparser.add_argument("--hardware-vram-total-mb", type=float, default=None)
+    subparser.add_argument(
+        "--local-lease-wait-seconds",
+        type=float,
+        default=local_lock.DEFAULT_WAIT_SECONDS,
+        help="Wait timeout for the shared local-llm lease (default: 3600 seconds).",
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

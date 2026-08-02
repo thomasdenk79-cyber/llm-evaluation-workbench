@@ -16,6 +16,7 @@ import csv
 import dataclasses
 import datetime as _dt
 import json
+import os
 import sqlite3
 import tempfile
 import time
@@ -3447,6 +3448,14 @@ class LiveGatesTests(unittest.TestCase):
     -- never via module monkeypatching -- so these tests can never reach a
     real Ollama server."""
 
+    def setUp(self) -> None:
+        lease_root = self._fresh_root() / "shared-lease"
+        patcher = mock.patch.dict(
+            os.environ, {"LOCAL_MODEL_LEASE_DIR": str(lease_root)}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _fresh_root(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -3547,6 +3556,7 @@ class LiveGatesTests(unittest.TestCase):
                     campaign_id="unit-connect-lock-refused",
                     model="qwen3-coder:30b",
                     lock_path=lock_path,
+                    lock_wait_seconds=0,
                     json_transport=_fake_json_transport_no_models_loaded,
                     stream_transport=_fake_stream_transport_ok_response,
                     monitor_factory=_FakeMonitor,

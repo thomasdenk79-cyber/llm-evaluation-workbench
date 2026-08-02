@@ -10,6 +10,22 @@
 
 ## Aktueller Stand
 
+### Stand: 2026-08-02 — Gemeinsame lokale Modell-Lease (kein Live-Modell)
+
+- `scripts\agent_helper_eval\local_lock.py` adaptiert jetzt die kanonische,
+  dependency-freie Lease unter
+  `standards\scripts\local_model_lease.py`; Resource-ID `local-llm` gilt
+  workspaceübergreifend für Ollama/llama.cpp.
+- Agent-Helper-Gates und `llm_migration_benchmark.py` warten begrenzt auf
+  Freigabe, erneuern die Lease während des Workloads und geben nur die
+  eigene zufällige Lease-ID frei. Siemens-Läufe benötigen keine lokale
+  Lease.
+- Fokussierte Shared-Lease- und Fake-Transport-Tests bestanden; kein
+  Modell-, Ollama-Generate- oder Netzwerkaufruf.
+- Nächster Schritt bleibt der bestehende serielle Pilot nach expliziter
+  interaktiver Freigabe; alle lokalen Entrypoints verwenden dabei dieselbe
+  Lease.
+
 ### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Serial-Pilot-Crash-Fix (kein Live-Modell)
 
 - Ein realer serieller Pilot (`agent-helper-serial-pilot-20260801`,

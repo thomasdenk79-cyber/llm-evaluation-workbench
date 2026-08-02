@@ -482,6 +482,7 @@ def run_ollama_connect_gate(
     hardware_gpu_model: Optional[str] = None,
     hardware_vram_total_mb: Optional[float] = None,
     lock_path: Optional[Path] = None,
+    lock_wait_seconds: float = local_lock.DEFAULT_WAIT_SECONDS,
     json_transport: ollama_client.JsonTransport = ollama_client.urllib_json_transport,
     stream_transport: ollama_client.StreamTransport = ollama_client.urllib_stream_transport,
     monitor_factory=resource_monitor.ResourceMonitor,
@@ -495,16 +496,16 @@ def run_ollama_connect_gate(
     """
 
     task = _find_task(CONNECT_GATE_TASK_ID)
-    lock_path = lock_path or (orchestrator.agent_helper_root(repo_root) / DEFAULT_LOCK_FILENAME)
-
     try:
-        loaded = ollama_client.ollama_ps(base_url, json_transport, timeout_seconds=10.0)
-        ollama_client.check_single_model_preflight(loaded, model, allow_reuse_loaded_model)
-    except (ollama_client.OllamaPreflightConflictError, ollama_client.OllamaError) as exc:
-        raise LiveGateRefusedError(str(exc)) from exc
-
-    try:
-        with local_lock.local_model_slot(lock_path, "ollama", model):
+        with local_lock.local_model_slot(
+            lock_path, "ollama", model, wait_seconds=lock_wait_seconds
+        ):
+            loaded = ollama_client.ollama_ps(
+                base_url, json_transport, timeout_seconds=10.0
+            )
+            ollama_client.check_single_model_preflight(
+                loaded, model, allow_reuse_loaded_model
+            )
             orchestrator_cpu_start = time.process_time()
             start_time = utc_now_iso()
             options = ollama_client.GenerateOptions(seed=seed, num_predict=num_predict, num_ctx=num_ctx)
@@ -513,7 +514,11 @@ def run_ollama_connect_gate(
                 json_transport, stream_transport, monitor_factory, unload_timeout_seconds=15.0,
             )
             end_time = utc_now_iso()
-    except local_lock.LocalModelLockError as exc:
+    except (
+        local_lock.LocalModelLockError,
+        ollama_client.OllamaPreflightConflictError,
+        ollama_client.OllamaError,
+    ) as exc:
         raise LiveGateRefusedError(str(exc)) from exc
 
     # run_id/sample_id/output_dir are computed here (right after the real
@@ -696,6 +701,7 @@ def run_ollama_mini_gate(
     hardware_gpu_model: Optional[str] = None,
     hardware_vram_total_mb: Optional[float] = None,
     lock_path: Optional[Path] = None,
+    lock_wait_seconds: float = local_lock.DEFAULT_WAIT_SECONDS,
     json_transport: ollama_client.JsonTransport = ollama_client.urllib_json_transport,
     stream_transport: ollama_client.StreamTransport = ollama_client.urllib_stream_transport,
     monitor_factory=resource_monitor.ResourceMonitor,
@@ -710,16 +716,16 @@ def run_ollama_mini_gate(
     """
 
     task = _find_task(MINI_GATE_TASK_ID)
-    lock_path = lock_path or (orchestrator.agent_helper_root(repo_root) / DEFAULT_LOCK_FILENAME)
-
     try:
-        loaded = ollama_client.ollama_ps(base_url, json_transport, timeout_seconds=10.0)
-        ollama_client.check_single_model_preflight(loaded, model, allow_reuse_loaded_model)
-    except (ollama_client.OllamaPreflightConflictError, ollama_client.OllamaError) as exc:
-        raise LiveGateRefusedError(str(exc)) from exc
-
-    try:
-        with local_lock.local_model_slot(lock_path, "ollama", model):
+        with local_lock.local_model_slot(
+            lock_path, "ollama", model, wait_seconds=lock_wait_seconds
+        ):
+            loaded = ollama_client.ollama_ps(
+                base_url, json_transport, timeout_seconds=10.0
+            )
+            ollama_client.check_single_model_preflight(
+                loaded, model, allow_reuse_loaded_model
+            )
             orchestrator_cpu_start = time.process_time()
             start_time = utc_now_iso()
             options = ollama_client.GenerateOptions(seed=seed, num_predict=num_predict, num_ctx=num_ctx)
@@ -728,7 +734,11 @@ def run_ollama_mini_gate(
                 json_transport, stream_transport, monitor_factory, unload_timeout_seconds=15.0,
             )
             end_time = utc_now_iso()
-    except local_lock.LocalModelLockError as exc:
+    except (
+        local_lock.LocalModelLockError,
+        ollama_client.OllamaPreflightConflictError,
+        ollama_client.OllamaError,
+    ) as exc:
         raise LiveGateRefusedError(str(exc)) from exc
 
     # run_id/sample_id/output_dir are computed here (right after the real

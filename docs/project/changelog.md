@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-02 — Shared local-model lease integration (kein Live-Modell)
+
+- Die repo-private PID-Lock-Implementierung ist jetzt ein dünner Adapter auf
+  `standards\scripts\local_model_lease.py`; Agent-Helper, Migration-Benchmark
+  und andere Workspace-Agenten verwenden dieselbe Resource-ID `local-llm`.
+- Lokale Entrypoints warten standardmäßig bis zu 3600 Sekunden, halten eine
+  per Heartbeat erneuerte Lease pro Modell und geben sie explizit frei.
+  Preflight läuft innerhalb der Lease; fremde Lease-IDs werden nie gelöscht.
+- `--local-lease-wait-seconds` erlaubt einen begrenzten operator-spezifischen
+  Timeout. Siemens-Backends bleiben leasefrei und semantisch unverändert.
+- Verifiziert ausschließlich mit fokussierten Lease-/Fake-Transport-Tests
+  und CLI-Help; kein Modell-, Ollama-Generate- oder Netzwerkaufruf.
+
 ## 2026-08-01 — Agent-Helper-Evaluation-Track: Serial-Pilot-Crash-Fix (kein Live-Modell)
 
 - **Auftrag:** einen realen seriellen Pilot-Absturz reproduzieren/beheben,

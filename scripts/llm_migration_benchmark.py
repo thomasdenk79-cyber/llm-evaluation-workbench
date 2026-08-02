@@ -22,6 +22,7 @@ from statistics import mean
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import psutil
+from agent_helper_eval import local_lock
 
 BENCHMARK_NAME = "ora-pg-py-33"
 BENCHMARK_SPEC_VERSION = "2026-07-26"
@@ -800,6 +801,12 @@ def parse_args() -> argparse.Namespace:
         help="llama.cpp server reasoning mode.",
     )
     parser.add_argument("--timeout-sec", type=int, default=900, help="Timeout per generation call.")
+    parser.add_argument(
+        "--local-lease-wait-seconds",
+        type=float,
+        default=local_lock.DEFAULT_WAIT_SECONDS,
+        help="Wait timeout for the shared local-llm lease (default: 3600 seconds).",
+    )
     parser.add_argument(
         "--output-dir",
         default="benchmark_results",
@@ -3468,34 +3475,44 @@ def main() -> int:
         else:
             print(f"Ollama models: {', '.join(ollama_models)}")
             for model in ollama_models:
-                startup_sec: Optional[float] = None
-                shutdown_sec: Optional[float] = None
-                model_result_indexes: List[int] = []
                 try:
-                    startup_sec = ollama_warmup_model(args.ollama_url, model, args.timeout_sec)
-                    print(f"[ollama] {model} warmup: {startup_sec:.3f}s")
-                except Exception as exc:
-                    print(f"[ollama] {model} warmup failed: {exc}")
-                for case in BENCH_TASKS:
-                    for run_id in range(1, args.runs + 1):
-                        if ("ollama", model, str(case["id"]), run_id) in completed_keys:
-                            continue
-                        print(f"[ollama] {model} | {case['id']} | run {run_id}")
-                        result = run_ollama_case(model, case, run_id, args)
-                        result.local_model_startup_sec = startup_sec
-                        results.append(apply_benchmark_metadata(result, benchmark_meta))
-                        model_result_indexes.append(len(results) - 1)
-                        if not (result.error or "").strip():
-                            completed_keys.add(("ollama", model, str(case["id"]), run_id))
+                    with local_lock.local_model_slot(
+                        None,
+                        "ollama",
+                        model,
+                        wait_seconds=args.local_lease_wait_seconds,
+                    ):
+                        startup_sec: Optional[float] = None
+                        shutdown_sec: Optional[float] = None
+                        model_result_indexes: List[int] = []
+                        try:
+                            startup_sec = ollama_warmup_model(args.ollama_url, model, args.timeout_sec)
+                            print(f"[ollama] {model} warmup: {startup_sec:.3f}s")
+                        except Exception as exc:
+                            print(f"[ollama] {model} warmup failed: {exc}")
+                        for case in BENCH_TASKS:
+                            for run_id in range(1, args.runs + 1):
+                                if ("ollama", model, str(case["id"]), run_id) in completed_keys:
+                                    continue
+                                print(f"[ollama] {model} | {case['id']} | run {run_id}")
+                                result = run_ollama_case(model, case, run_id, args)
+                                result.local_model_startup_sec = startup_sec
+                                results.append(apply_benchmark_metadata(result, benchmark_meta))
+                                model_result_indexes.append(len(results) - 1)
+                                if not (result.error or "").strip():
+                                    completed_keys.add(("ollama", model, str(case["id"]), run_id))
+                                save_progress_snapshot(results, args, run_tag)
+                        try:
+                            shutdown_sec = ollama_unload_model(args.ollama_url, model, args.timeout_sec)
+                            print(f"[ollama] {model} unload: {shutdown_sec:.3f}s")
+                        except Exception as exc:
+                            print(f"[ollama] {model} unload failed: {exc}")
+                        for idx in model_result_indexes:
+                            results[idx].local_model_shutdown_sec = shutdown_sec
                         save_progress_snapshot(results, args, run_tag)
-                try:
-                    shutdown_sec = ollama_unload_model(args.ollama_url, model, args.timeout_sec)
-                    print(f"[ollama] {model} unload: {shutdown_sec:.3f}s")
-                except Exception as exc:
-                    print(f"[ollama] {model} unload failed: {exc}")
-                for idx in model_result_indexes:
-                    results[idx].local_model_shutdown_sec = shutdown_sec
-                save_progress_snapshot(results, args, run_tag)
+                except local_lock.LocalModelLockError as exc:
+                    print(f"ERROR: local-model lease unavailable for ollama/{model}: {exc}")
+                    return 3
 
     if args.backend in ("llama_cpp", "both", "all"):
         try:
@@ -3509,29 +3526,49 @@ def main() -> int:
             print(f"llama.cpp models: {', '.join(name for name, _ in llama_models)}")
             if args.llama_server:
                 for model_name, model_path in llama_models:
-                    print(f"[llama_cpp/server] {model_name} | loading model")
-                    model_results = [
-                        apply_benchmark_metadata(r, benchmark_meta)
-                        for r in run_llama_server_model(args.llama_server, model_name, model_path, args, completed_keys=completed_keys)
-                    ]
-                    for row in model_results:
-                        print(f"[llama_cpp/server] {model_name} | {row.case_id} | run {row.run}")
-                        if not (row.error or "").strip():
-                            completed_keys.add(("llama_cpp", model_name, row.case_id, row.run))
-                    results.extend(model_results)
-                    save_progress_snapshot(results, args, run_tag)
+                    try:
+                        with local_lock.local_model_slot(
+                            None,
+                            "llama_cpp",
+                            model_name,
+                            wait_seconds=args.local_lease_wait_seconds,
+                        ):
+                            print(f"[llama_cpp/server] {model_name} | loading model")
+                            model_results = [
+                                apply_benchmark_metadata(r, benchmark_meta)
+                                for r in run_llama_server_model(args.llama_server, model_name, model_path, args, completed_keys=completed_keys)
+                            ]
+                            for row in model_results:
+                                print(f"[llama_cpp/server] {model_name} | {row.case_id} | run {row.run}")
+                                if not (row.error or "").strip():
+                                    completed_keys.add(("llama_cpp", model_name, row.case_id, row.run))
+                            results.extend(model_results)
+                            save_progress_snapshot(results, args, run_tag)
+                    except local_lock.LocalModelLockError as exc:
+                        print(f"ERROR: local-model lease unavailable for llama_cpp/{model_name}: {exc}")
+                        return 3
             else:
                 for model_name, model_path in llama_models:
-                    for case in BENCH_TASKS:
-                        for run_id in range(1, args.runs + 1):
-                            if ("llama_cpp", model_name, str(case["id"]), run_id) in completed_keys:
-                                continue
-                            print(f"[llama_cpp/cli] {model_name} | {case['id']} | run {run_id}")
-                            result = run_llama_cpp_case(model_name, model_path, case, run_id, args)
-                            results.append(apply_benchmark_metadata(result, benchmark_meta))
-                            if not (result.error or "").strip():
-                                completed_keys.add(("llama_cpp", model_name, str(case["id"]), run_id))
-                            save_progress_snapshot(results, args, run_tag)
+                    try:
+                        with local_lock.local_model_slot(
+                            None,
+                            "llama_cpp",
+                            model_name,
+                            wait_seconds=args.local_lease_wait_seconds,
+                        ):
+                            for case in BENCH_TASKS:
+                                for run_id in range(1, args.runs + 1):
+                                    if ("llama_cpp", model_name, str(case["id"]), run_id) in completed_keys:
+                                        continue
+                                    print(f"[llama_cpp/cli] {model_name} | {case['id']} | run {run_id}")
+                                    result = run_llama_cpp_case(model_name, model_path, case, run_id, args)
+                                    results.append(apply_benchmark_metadata(result, benchmark_meta))
+                                    if not (result.error or "").strip():
+                                        completed_keys.add(("llama_cpp", model_name, str(case["id"]), run_id))
+                                    save_progress_snapshot(results, args, run_tag)
+                    except local_lock.LocalModelLockError as exc:
+                        print(f"ERROR: local-model lease unavailable for llama_cpp/{model_name}: {exc}")
+                        return 3
 
     if args.backend in ("siemens", "all"):
         token = load_siemens_token(args)

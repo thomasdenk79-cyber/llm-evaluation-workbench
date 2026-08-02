@@ -949,10 +949,13 @@ human/parent agent runs manually.
    or the *same* model loaded without `--allow-reuse-loaded-model` explicitly
    passed (even the same model is refused by default — an operator must
    consciously opt in to reuse).
-2. **Local filesystem lock** (`local_lock.py`, reused as-is): the existing
-   "max one local model" lock so two of this harness's own invocations can
-   never overlap on a 12 GB VRAM budget.
-3. A preflight or lock refusal raises `live_gates.LiveGateRefusedError`
+2. **Shared local-model lease** (`local_lock.py` adapts the canonical
+   `standards/scripts/local_model_lease.py`): wait for Resource-ID
+   `local-llm`, renew it while the workload runs, then perform the Ollama
+   preflight while still holding it. Agents, migration benchmarks and this
+   harness therefore cannot cooperatively overlap on the 12 GB VRAM budget.
+3. A preflight, lease timeout or OS-lock error raises
+   `live_gates.LiveGateRefusedError`
    **before anything is attempted and persists no sample row** — nothing was
    actually run, so there is nothing to record.
 4. **Real HTTP call** (`ollama_client.ollama_generate`, streamed,
@@ -1022,7 +1025,8 @@ Gate-specific flags: `--timeout-seconds` (connect default `30.0`, mini
 default `180.0`), `--num-predict` (connect `16`, mini `800`), `--num-ctx`
 (connect `512`, mini `4096`), and mini-only `--test-timeout-seconds`
 (default `20.0`). Shared flags: `--base-url` (default
-`http://127.0.0.1:11434`), `--allow-reuse-loaded-model`, `--keep-alive`,
+`http://127.0.0.1:11434`), `--local-lease-wait-seconds` (default `3600`),
+`--allow-reuse-loaded-model`, `--keep-alive`,
 `--provider`/`--runtime`/`--quantization`, and `--hardware-*` (operator-
 declared, never inferred/fabricated). A refusal prints
 `REFUSED (nothing attempted, nothing persisted): <reason>` and exits with
@@ -1100,9 +1104,9 @@ the whole Ollama HTTP call (cold model load included). Both gate functions
 now measure `generate_wall_seconds` (client-side wall-clock around exactly
 the `ollama_generate()` call, excluding the always-unload cleanup call) and
 set: `llm_request_seconds = generate_wall_seconds` (the entire API call is
-on the LLM/API critical path); `llm_queue_seconds = None` (a fail-fast
-preflight lock — see `local_lock.local_model_slot()` — never actually
-blocks/waits, so there is no real queue time to report; genuine
+on the LLM/API critical path); `llm_queue_seconds = None` (shared-lease
+waiting happens before an attempt starts and is not backend queue time;
+see `local_lock.local_model_slot()`; genuine
 queue/service-time splitting is reserved for the future 1/2/4-concurrency
 profiling phase, §11.3); `model_load_seconds =
 ollama_client.ns_to_seconds(load_duration_ns)` — a diagnostic,
@@ -1351,8 +1355,9 @@ structurally impossible, not just avoided by convention:
   wrong/incomplete answer does not change the answer's quality, and would
   contradict "repeated fast failures must score worse than one slower
   accepted pass" (§9).
-- **Preflight/lock refusal** (`LiveGateRefusedError`, e.g. an unexpected
-  already-loaded model, or a stuck lock file) **halts the whole campaign
+- **Preflight/lease refusal** (`LiveGateRefusedError`, e.g. an unexpected
+  already-loaded model, lease wait timeout, corrupt metadata or OS-lock
+  error) **halts the whole campaign
   by default** (`halt_on_preflight_refusal=True`) — a persistent external
   conflict is likely to recur for every subsequent model too and warrants
   operator attention rather than silent skip-and-continue.

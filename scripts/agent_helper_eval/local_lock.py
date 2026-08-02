@@ -25,8 +25,8 @@ def _load_shared_module():
     repo_root = Path(__file__).resolve().parents[2]
     candidates.extend(
         [
-            repo_root / "standards" / "scripts" / "local_model_lease.py",
             Path(r"C:\GIT\standards\scripts\local_model_lease.py"),
+            repo_root / "standards" / "scripts" / "local_model_lease.py",
         ]
     )
     script_path = next((path for path in candidates if path.is_file()), None)
@@ -55,8 +55,50 @@ LockInfo = _shared.LeaseMetadata
 _owned_leases: dict[tuple[str, str], str] = {}
 
 
+def _load_runtime_module():
+    configured = os.environ.get("AI_RUNTIME_SCRIPT")
+    candidates = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        [
+            Path(r"C:\GIT\standards\scripts\ai_runtime.py"),
+            Path(__file__).resolve().parents[2] / "standards" / "scripts" / "ai_runtime.py",
+        ]
+    )
+    script_path = next((path for path in candidates if path.is_file()), None)
+    if script_path is None:
+        raise RuntimeError(
+            "AI runtime control-plane script not found; set AI_RUNTIME_SCRIPT or install standards"
+        )
+    module_name = "_shared_ai_runtime"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load AI runtime control-plane script: {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_runtime = _load_runtime_module()
+
+
 def is_local_backend(backend: str) -> bool:
     return backend in LOCAL_BACKENDS
+
+
+def _assert_runtime_available() -> None:
+    try:
+        policy = _runtime.load_policy(_runtime.DEFAULT_POLICY_PATH)
+    except _runtime.RuntimeErrorBase as error:
+        raise LocalModelLockError(f"cannot load AI runtime policy: {error}") from error
+    reason = _runtime.local_block_reason(policy, _runtime.DEFAULT_STATE_DIR)
+    if reason:
+        raise LocalModelLockError(f"local model resource is blocked: {reason}")
 
 
 def _manager(lock_path: Optional[Path]):
@@ -78,6 +120,7 @@ def acquire_local_model_lock(
             f"acquire_local_model_lock() is only for local backends "
             f"{sorted(LOCAL_BACKENDS)}, got {backend!r}"
         )
+    _assert_runtime_available()
     manager = _manager(lock_path)
     owner_pid = os.getpid() if pid is None else pid
     owner = f"llm-evaluation-workbench:{owner_pid}"
@@ -119,6 +162,7 @@ def local_model_slot(
             f"local_model_slot() is only for local backends "
             f"{sorted(LOCAL_BACKENDS)}, got {backend!r}"
         )
+    _assert_runtime_available()
     manager = _manager(lock_path)
     owner = f"llm-evaluation-workbench:{os.getpid()}"
     with manager.hold(

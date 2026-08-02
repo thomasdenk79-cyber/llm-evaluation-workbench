@@ -15,8 +15,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-DEFAULT_CONTEXT = 131_072
-DEFAULT_OUTPUT = 32_768
+# Native model context is capability metadata, not an operating budget. The
+# runtime guard requires a new phase before 98,304 tokens and keeps output
+# bounded so tool-agent sessions do not reserve a full native context by default.
+DEFAULT_CONTEXT = 98_304
+DEFAULT_OUTPUT = 8_192
+MAX_OPERATING_CONTEXT = 98_304
 SHARD_PATTERN = re.compile(
     r"^(?P<base>.+)-(?P<part>\d{5})-of-(?P<total>\d{5})\.gguf$",
     re.IGNORECASE,
@@ -197,7 +201,10 @@ def model_definition(
     inputs = ["text", "image"] if image_input else ["text"]
     return {
         "name": display_name,
-        "limit": {"context": context, "output": min(context, DEFAULT_OUTPUT)},
+        "limit": {
+            "context": min(context, MAX_OPERATING_CONTEXT),
+            "output": min(context, DEFAULT_OUTPUT),
+        },
         "modalities": {"input": inputs, "output": ["text"]},
     }
 
@@ -238,7 +245,7 @@ def discover_ollama_models(
                     and value > 0
                 ]
                 if candidates:
-                    context = max(candidates)
+                    context = min(max(candidates), MAX_OPERATING_CONTEXT)
             capabilities = details.get("capabilities", [])
             image_input = isinstance(capabilities, list) and "vision" in capabilities
             parameters = details.get("parameters", "")
@@ -248,7 +255,10 @@ def discover_ollama_models(
                     parameters,
                 )
                 if configured:
-                    context = max(context, int(float(configured.group(1))))
+                    context = min(
+                        max(context, int(float(configured.group(1)))),
+                        MAX_OPERATING_CONTEXT,
+                    )
         except (OSError, ValueError, urllib.error.URLError) as error:
             warnings.append(f"Using default metadata for {name}: {error}")
 

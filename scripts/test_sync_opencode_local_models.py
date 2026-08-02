@@ -164,6 +164,15 @@ class LocalModelSyncTests(unittest.TestCase):
         self.assertEqual(models["local:q4"]["limit"]["context"], 65536)
         self.assertEqual(len(warnings), 2)
 
+    def test_model_definition_caps_native_context_to_operating_budget(self) -> None:
+        definition = sync_models.model_definition("Ollama | large", context=262144)
+
+        self.assertEqual(
+            definition["limit"]["context"],
+            sync_models.MAX_OPERATING_CONTEXT,
+        )
+        self.assertEqual(definition["limit"]["output"], sync_models.DEFAULT_OUTPUT)
+
 
 if __name__ == "__main__":
     unittest.main()

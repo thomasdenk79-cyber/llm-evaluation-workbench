@@ -145,6 +145,29 @@ python .\scripts\run_hard_agent_benchmark.py `
 Nach Abbruch denselben Befehl mit `--resume` fortsetzen. Kurze physische
 Workspace-Pfade verhindern Windows-Long-Path-Verzerrungen.
 
+## 7.1) Sustained CPU/GPU thermal-load comparison
+
+Use this only after recording a stable driver, Lenovo Vantage mode, Windows
+power mode, AC power, room conditions, and notebook-cooler setting. It holds
+one local Qwen coding workload for ten minutes, makes serial requests only,
+and writes raw 1 Hz CPU/GPU/VRAM/power/temperature/clock telemetry plus
+per-request tok/s to an isolated result directory.
+
+```powershell
+cd C:\GIT\llm-evaluation-workbench\scripts
+
+# Select Q4 or Q5 and cooler off/on interactively. Ollama starts only when
+# necessary, and a server started by this script stops after the run.
+python .\run_sustained_ollama_load.py
+```
+
+The default is `qwen3.6:35b`, Q4, 16K context, 512 output tokens per
+request, and 600 seconds of sustained work. Q5 is selectable only as a
+controlled follow-up when Q4 does not impose sufficient CPU-offload load. Do
+not compare runs with different models, drivers, power modes, or cooler states. `summary.json`,
+`telemetry.csv`, and `requests.jsonl` are the raw evidence; do not infer an
+energy value that the system did not measure.
+
 ## 8) Agent-Helper-Evaluation-Track (Harness + expliziter Echt-Gate-Executor)
 
 Vollständige Methodik/Schema/Rubrik-Dokumentation:

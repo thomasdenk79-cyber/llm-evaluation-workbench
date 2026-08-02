@@ -11,6 +11,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -1739,7 +1740,14 @@ def run_llama_server_model(
                         .get("content", "")
                     )
                     cleaned_text = clean_model_output(text)
-                    save_model_artifact(args.output_dir, "siemens", model, str(case["id"]), run_id, cleaned_text)
+                    save_model_artifact(
+                        args.output_dir,
+                        "llama_cpp",
+                        model_name,
+                        str(case["id"]),
+                        run_id,
+                        cleaned_text,
+                    )
                     quality, hits, forbidden_hits = score_output(text, case["required_keywords"], case.get("forbidden_keywords"))
                     wall_s = (time.perf_counter() - start)
                     usage = parsed.get("usage", {}) if isinstance(parsed, dict) else {}
@@ -2814,7 +2822,15 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         run_vals = [v for v in run_vals if v is not None]
         run_count_default = max(run_vals) if run_vals else 1
     task_defs = [(str(t["id"]), str(t["title"])) for t in BENCH_TASKS]
-    global_avg_wall_s = mean([(float(r["wall_ms"]) / 1000.0) for r in summary_rows if r.get("wall_ms") is not None]) if summary_rows else 10.0
+    successful_wall_seconds: List[float] = []
+    for row in summary_rows:
+        try:
+            wall_seconds = float(row["wall_ms"]) / 1000.0
+        except (KeyError, TypeError, ValueError):
+            continue
+        if wall_seconds > 0:
+            successful_wall_seconds.append(wall_seconds)
+    global_avg_wall_s = mean(successful_wall_seconds) if successful_wall_seconds else 10.0
     if global_avg_wall_s <= 0:
         global_avg_wall_s = 10.0
 

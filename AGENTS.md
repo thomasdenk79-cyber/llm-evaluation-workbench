@@ -26,6 +26,27 @@
   interaktiver Freigabe; alle lokalen Entrypoints verwenden dabei dieselbe
   Lease.
 
+### Stand: 2026-08-01 23:45 — Session-Handover für Modellwechsel
+
+- Kanonischer Wiederaufsetzpunkt:
+  `docs\project\handover.md`.
+- Kanonische offene Arbeit:
+  `docs\project\todo.md`.
+- Agent-Helper-Harness implementiert und zuletzt mit **273/273** schnellen
+  Tests validiert. Er umfasst SQLite-SSOT, stabile CSV-Exporte,
+  Qualitätsgates, Ollama-Lifecycle, seriellen Resume-Runner, Phasen- und
+  Ressourcenmessung sowie einen offlinefähigen DE/EN-HTML-Report.
+- Der serielle Pilot `agent-helper-serial-pilot-20260801` ist nach einem
+  behobenen Windows-Langpfadfehler resumierbar. Ein erfolgreiches
+  Connect-Gate für `qwen3-coder:30b` ist bereits gespeichert; das
+  fehlende Mini-Gate und drei Baselines stehen noch aus.
+- Ein losgelöster Download-/Importprozess installiert Q5/Q6 für Qwen 3.6
+  35B A3B und Laguna XS 2.1. Solange er läuft, keine lokalen
+  Performance-Benchmarks starten.
+- Keine Commits oder Pushes in dieser Session. Der Worktree enthält
+  umfangreiche ältere und parallele Änderungen; niemals pauschal
+  bereinigen oder zurücksetzen.
+
 ### Stand: 2026-08-01 — Agent-Helper-Evaluation-Track: Serial-Pilot-Crash-Fix (kein Live-Modell)
 
 - Ein realer serieller Pilot (`agent-helper-serial-pilot-20260801`,

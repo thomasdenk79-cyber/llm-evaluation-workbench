@@ -473,18 +473,18 @@ def launch_metadata(
     params = {
         "backend": backend,
         "server_kind": "ik_llama.cpp" if is_ik_fork else ("ollama" if backend == "ollama" else "llama.cpp"),
-        "ctx_size": args.ctx_size,
-        "threads": args.threads,
-        "threads_batch": args.threads,
-        "ngl": args.ngl,
-        "batch_size": args.llama_batch_size,
-        "ubatch_size": args.llama_ubatch_size,
-        "kv_cache_k": "q8_0" if backend != "ollama" else "ollama-default",
-        "kv_cache_v": "q8_0" if backend != "ollama" else "ollama-default",
-        "flash_attention": backend != "ollama",
+        "ctx_size": args.ctx_size if backend != "ollama" else args.ctx_size,
+        "threads": args.threads if backend != "ollama" else args.threads,
+        "threads_batch": args.threads if backend != "ollama" else "ollama-managed",
+        "ngl": args.ngl if backend != "ollama" else "ollama-managed",
+        "batch_size": args.llama_batch_size if backend != "ollama" else "ollama-managed",
+        "ubatch_size": args.llama_ubatch_size if backend != "ollama" else "ollama-managed",
+        "kv_cache_k": "q8_0" if backend != "ollama" else "ollama-managed",
+        "kv_cache_v": "q8_0" if backend != "ollama" else "ollama-managed",
+        "flash_attention": "ollama-managed" if backend == "ollama" else True,
         "continuous_batching": False if backend != "ollama" else "ollama-default",
-        "offload_profile": args.ik_offload_profile if is_ik_fork else "fit",
-        "fit_margin_mib": args.llama_fit_target_mib,
+        "offload_profile": args.ik_offload_profile if is_ik_fork else ("ollama-managed" if backend == "ollama" else "fit"),
+        "fit_margin_mib": args.llama_fit_target_mib if backend != "ollama" else None,
         "n_cpu_moe": args.ik_n_cpu_moe if is_ik_fork else None,
         "spec_type": list(args.ik_spec_type) if is_ik_fork else [],
         "spec_autotune": bool(args.ik_spec_autotune) if is_ik_fork else False,
@@ -1398,7 +1398,9 @@ def ollama_warmup_model(api_url: str, model: str, timeout_sec: int) -> float:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout_sec):
+    # Unload is cleanup, not a generation request. A stuck Ollama shutdown
+    # must not consume the full per-generation timeout or block resume.
+    with urllib.request.urlopen(req, timeout=min(timeout_sec, 30)):
         pass
     return time.perf_counter() - start
 
@@ -4084,6 +4086,9 @@ def save_progress_snapshot(
 ) -> None:
     if not results:
         return
+    for result in results:
+        if not result.launch_profile:
+            stamp_launch_metadata(result, args, result.backend)
     save_results(results, args.output_dir, run_tag=run_tag, inprogress=True)
     update_markdown_report(args.output_dir, args.report_file, args)
 
@@ -4308,6 +4313,9 @@ def main() -> int:
         print("No benchmarks executed.")
         return 1
 
+    for result in results:
+        if not result.launch_profile:
+            stamp_launch_metadata(result, args, result.backend)
     print_summary(results)
     csv_path, json_path = save_results(results, args.output_dir, run_tag=run_tag, inprogress=False)
     progress_csv = os.path.join(args.output_dir, f"migration_llm_bench_{run_tag}_inprogress.csv")

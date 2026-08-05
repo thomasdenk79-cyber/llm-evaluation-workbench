@@ -187,7 +187,15 @@ starts silently rewriting launch parameters.
 - [x] `scripts/llm_bench_tui.py` -- Textual TUI with Dashboard, Config,
       Models & backends, and Results/report screens (see file for the
       exact widget tree); Leaderboard screen included with a graceful
-      fallback when `plotext` is unavailable.
+      fallback when `plotext` is unavailable. The dashboard reads child
+      output on a background thread so a quiet benchmark cannot freeze the
+      TUI; Config offers benchmark-file and model selection; local GGUFs are
+      discovered from the standard llama.cpp model directories; and the
+      Agent monitor tab launches the existing `wt-command-center` monitor
+      instead of duplicating its collector.
+- [x] Results use the benchmark field from the shared report payload, expose
+      Tasks instead of a duplicate Run column, and sort when a column header
+      is selected.
 - [x] `run_benchmark.py` now launches the Textual TUI (instead of the
       Tkinter `_gui()`) when invoked with no arguments in an interactive
       terminal; unchanged behavior otherwise.

@@ -278,8 +278,13 @@ def _split(value: Any) -> list[str]:
 def _ollama_models(patterns: list[str], url: str = "http://127.0.0.1:11434") -> list[str]:
     if not patterns:
         return []
+    base_url = url.rstrip("/")
+    if base_url.endswith("/api/generate"):
+        base_url = base_url[:-len("/api/generate")]
+    elif base_url.endswith("/api"):
+        base_url = base_url[:-len("/api")]
     try:
-        with urllib.request.urlopen(url.rstrip("/") + "/api/tags", timeout=5) as response:
+        with urllib.request.urlopen(base_url + "/api/tags", timeout=5) as response:
             tags = json.loads(response.read().decode("utf-8")).get("models", [])
         names = [str(item.get("name", "")) for item in tags if item.get("name")]
     except Exception as exc:

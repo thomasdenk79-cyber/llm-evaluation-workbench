@@ -25,6 +25,8 @@ import subprocess
 import sys
 import time
 import urllib.request
+from queue import Empty, Queue
+from threading import Thread
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,10 +49,12 @@ from textual.widgets import (  # noqa: E402
     Label,
     Log,
     Select,
+    SelectionList,
     Static,
     Switch,
     TabbedContent,
     TabPane,
+    Checkbox,
 )
 
 ROOT = rb.ROOT
@@ -88,6 +92,7 @@ STATUS_COLORS = {
     "running": "dodger_blue1",
     "processing": "dodger_blue1",
     "stopped": "grey62",
+    "paused": "dark_orange",
 }
 
 
@@ -165,6 +170,35 @@ def gguf_registry(table: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
+def discover_gguf_models() -> list[tuple[str, str]]:
+    """Discover complete local GGUF files, even when TOML registration is absent."""
+    roots = [
+        Path.home() / "llama.cpp" / "models",
+        Path.home() / "llama.cpp-ik" / "models",
+    ]
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.gguf")):
+            if path.name.lower().startswith("ggml-vocab-"):
+                continue
+            resolved = str(path.resolve())
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            found.append((path.stem, resolved))
+    return found
+
+
+def benchmark_files() -> list[tuple[str, str]]:
+    return [
+        (path.stem, str(path))
+        for path in sorted((ROOT / "benchmarks").glob("*.json"))
+    ]
+
+
 # --------------------------------------------------------------------------
 # Report data: parse the *same* embedded JSON the Tabulator HTML grid uses,
 # so the Results screen below can never drift from the HTML report -- it is
@@ -237,8 +271,11 @@ class DashboardPane(Vertical):
 
     def on_mount(self) -> None:
         self._proc: Optional[subprocess.Popen] = None
+        self._log_queue: Queue[str] = Queue()
+        self._reader: Optional[Thread] = None
         self.refresh_status()
         self.set_interval(2.0, self.refresh_status)
+        self.set_interval(0.2, self._pump_log)
 
     def refresh_status(self) -> None:
         lock = rb._read_lock(rb.DEFAULT_LOCK_FILE)
@@ -266,10 +303,15 @@ class DashboardPane(Vertical):
             config_path = configs[0] if configs else rb.DEFAULT_CONFIG
             command = [sys.executable, str(ROOT / "scripts" / "run_benchmark.py"), "--config", str(config_path)]
             log.write_line(f"Starting: {' '.join(command)}")
+            popen_kwargs: dict[str, Any] = {}
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             self._proc = subprocess.Popen(
-                command, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                command, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, text=True, bufsize=1, **popen_kwargs,
             )
-            self.set_interval(0.5, self._pump_log, pause=False)
+            self._reader = Thread(target=self._read_child_output, daemon=True)
+            self._reader.start()
         elif event.button.id == "pause":
             rb.DEFAULT_PAUSE_FILE.touch()
             log.write_line("Pause requested (pause.ini created).")
@@ -283,18 +325,24 @@ class DashboardPane(Vertical):
             self.refresh_status()
         self.refresh_status()
 
-    def _pump_log(self) -> None:
-        if not self._proc or self._proc.stdout is None:
+    def _read_child_output(self) -> None:
+        process = self._proc
+        if not process or process.stdout is None:
             return
+        for line in process.stdout:
+            self._log_queue.put(line.rstrip())
+
+    def _pump_log(self) -> None:
         log = self.query_one("#run_log", Log)
         while True:
-            line = self._proc.stdout.readline()
-            if not line:
+            try:
+                log.write_line(self._log_queue.get_nowait())
+            except Empty:
                 break
-            log.write_line(line.rstrip())
-        if self._proc.poll() is not None:
+        if self._proc and self._proc.poll() is not None:
             log.write_line(f"[run_benchmark.py exited with code {self._proc.returncode}]")
             self._proc = None
+            self._reader = None
 
 
 # --------------------------------------------------------------------------
@@ -308,14 +356,22 @@ class ConfigPane(Vertical):
         with Horizontal():
             yield Select(options, id="config_select", value=options[0][1])
             yield Button("↻ Reload", id="reload")
-        with VerticalScroll(id="fields"):
-            for key in ("backend", "runs", "timeout_sec", "resume", "run", "ollama_url"):
-                with Horizontal(classes="field_row"):
-                    yield Label(key, classes="field_label")
-                    yield Input(id=f"field_{key}")
-            with Horizontal(classes="field_row"):
-                yield Label("models (comma-separated)", classes="field_label")
-                yield Input(id="field_models")
+        with Horizontal(classes="field_row"):
+            yield Label("Benchmark", classes="field_label")
+            yield Select(benchmark_files() or [("(none found)", "")], id="benchmark_file")
+        with Horizontal(classes="field_row"):
+            yield Label("Backend", classes="field_label")
+            yield Select([(v, v) for v in ("ollama", "llama_cpp", "both")], id="field_backend")
+            yield Label("Runs", classes="field_label compact_label")
+            yield Input(id="field_runs")
+            yield Label("Timeout", classes="field_label compact_label")
+            yield Input(id="field_timeout_sec")
+        with VerticalScroll(id="model_selection_wrap"):
+            yield Label("Models (click to select; local GGUFs are discovered automatically)")
+            yield SelectionList(id="model_selection")
+        with Horizontal(classes="field_row"):
+            yield Label("Ollama URL", classes="field_label")
+            yield Input(id="field_ollama_url")
         with Horizontal():
             yield Button("💾 Save", id="save", variant="success")
             yield Switch(id="confirm_reset")
@@ -336,10 +392,38 @@ class ConfigPane(Vertical):
             return
         header, table = load_campaign_toml(path)
         self._header, self._table = header, table
-        for key in ("backend", "runs", "timeout_sec", "resume", "run", "ollama_url"):
+        self.query_one("#field_backend", Select).value = str(table.get("backend", "ollama"))
+        for key in ("runs", "timeout_sec"):
             self.query_one(f"#field_{key}", Input).value = str(table.get(key, ""))
-        self.query_one("#field_models", Input).value = ", ".join(rb._split(table.get("models", [])))
+        self.query_one("#field_ollama_url", Input).value = str(table.get("ollama_url", ""))
+        benchmark_path = str(table.get("benchmark_file", ""))
+        if not benchmark_path:
+            configured_runner = rb._split(table.get("runner_args", []))
+            if "--benchmark-file" in configured_runner:
+                idx = configured_runner.index("--benchmark-file")
+                if idx + 1 < len(configured_runner):
+                    benchmark_path = configured_runner[idx + 1]
+        benchmark_select = self.query_one("#benchmark_file", Select)
+        benchmark_select.value = benchmark_path if benchmark_path else Select.BLANK
+        self._refresh_model_options(table)
         self.query_one("#config_status", Static).update(f"Loaded {path}")
+
+    def _refresh_model_options(self, table: dict[str, Any]) -> None:
+        selected_ollama = set(rb._split(table.get("models", [])) + rb._split(table.get("ollama_models", [])))
+        selected_llama = {name for name, _ in gguf_registry(table)}
+        choices: list[tuple[str, str, bool]] = []
+        try:
+            ollama = fetch_ollama_tags(str(table.get("ollama_url", "http://127.0.0.1:11434")).replace("/api/generate", ""))
+        except Exception:
+            ollama = []
+        names = sorted(set(selected_ollama) | {str(item.get("name")) for item in ollama if item.get("name")})
+        choices.extend((f"[Ollama] {name}", f"ollama|{name}", name in selected_ollama) for name in names)
+        ggufs = dict(gguf_registry(table))
+        for name, path in discover_gguf_models():
+            ggufs.setdefault(name, path)
+        choices.extend((f"[llama.cpp] {name}", f"llama|{name}={path}", name in selected_llama)
+                       for name, path in sorted(ggufs.items()))
+        self.query_one("#model_selection", SelectionList).set_options(choices)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "config_select":
@@ -354,17 +438,26 @@ class ConfigPane(Vertical):
             self._load_selected()
         elif event.button.id == "save":
             table = dict(self._table)
-            table["backend"] = self.query_one("#field_backend", Input).value.strip() or table.get("backend")
+            backend_value = self.query_one("#field_backend", Select).value
+            table["backend"] = str(backend_value) if backend_value not in (Select.BLANK, None) else table.get("backend")
             for int_key in ("runs", "timeout_sec"):
                 raw = self.query_one(f"#field_{int_key}", Input).value.strip()
                 if raw.isdigit():
                     table[int_key] = int(raw)
-            table["resume"] = self.query_one("#field_resume", Input).value.strip() or table.get("resume")
-            table["run"] = self.query_one("#field_run", Input).value.strip() or table.get("run")
             table["ollama_url"] = self.query_one("#field_ollama_url", Input).value.strip() or table.get("ollama_url")
-            models_raw = self.query_one("#field_models", Input).value.strip()
-            if models_raw:
-                table["models"] = [m.strip() for m in models_raw.split(",") if m.strip()]
+            selected = self.query_one("#model_selection", SelectionList).selected
+            table["models"] = [str(value).split("|", 1)[1] for value in selected if str(value).startswith("ollama|")]
+            table["llama_models"] = [str(value).split("|", 1)[1] for value in selected if str(value).startswith("llama|")]
+            benchmark_value = self.query_one("#benchmark_file", Select).value
+            if benchmark_value not in (Select.BLANK, None, ""):
+                runner_args = list(rb._split(table.get("runner_args", [])))
+                if "--benchmark-file" in runner_args:
+                    idx = runner_args.index("--benchmark-file")
+                    if idx + 1 < len(runner_args):
+                        runner_args[idx + 1] = str(benchmark_value)
+                else:
+                    runner_args.extend(["--benchmark-file", str(benchmark_value)])
+                table["runner_args"] = runner_args
             write_campaign_toml(path, self._header, table)
             self._table = table
             status.update(f"Saved {path} at {datetime.now().strftime('%H:%M:%S')}")
@@ -388,7 +481,8 @@ class ModelsPane(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield Button("↻ Refresh", id="refresh")
-            yield Button("⬇ Pull Ollama model", id="pull")
+            yield Select([], id="pull_model", prompt="Select Ollama model to pull")
+            yield Button("⬇ Pull selected", id="pull")
             yield Button("📎 Register GGUF path", id="register")
             yield Button("🗄 Backup inventory", id="backup")
         yield DataTable(id="models_table")
@@ -417,10 +511,19 @@ class ModelsPane(Vertical):
             for entry in sorted(tags, key=lambda e: str(e.get("name", ""))):
                 size_gb = (entry.get("size") or 0) / (1024 ** 3)
                 table.add_row("Ollama", str(entry.get("name", "")), f"{size_gb:.1f} GB", "")
-            ollama_note = f"{len(tags)} Ollama models"
+            installed = {str(entry.get("name", "")) for entry in tags}
+            configured = rb._split(cfg.get("models", [])) + rb._split(cfg.get("ollama_models", []))
+            candidates = sorted(installed | set(configured))
+            self.query_one("#pull_model", Select).set_options(
+                [(name, name) for name in candidates if name not in installed]
+            )
+            ollama_note = f"{len(tags)} Ollama models ({sum(name not in installed for name in candidates)} pull candidates)"
         except Exception as exc:
             ollama_note = f"Ollama unavailable: {exc}"
-        for name, path in gguf_registry(cfg):
+        registered = dict(gguf_registry(cfg))
+        for name, path in discover_gguf_models():
+            registered.setdefault(name, path)
+        for name, path in sorted(registered.items()):
             p = Path(path)
             size = f"{p.stat().st_size / (1024**3):.1f} GB" if p.is_file() else "missing"
             table.add_row("llama.cpp", name, size, path if p.is_file() else "path not found")
@@ -431,7 +534,11 @@ class ModelsPane(Vertical):
         if event.button.id == "refresh":
             self.refresh_models()
         elif event.button.id == "pull":
-            self.app.push_screen(PromptModal("Ollama model to pull (e.g. qwen3.6:27b-q4_K_M)"), self._do_pull)
+            selected = self.query_one("#pull_model", Select).value
+            if selected not in (Select.BLANK, None, ""):
+                self._do_pull(str(selected))
+            else:
+                status.update("Select an Ollama model first.")
         elif event.button.id == "register":
             self.app.push_screen(PromptModal("NAME=path\\to\\model.gguf"), self._do_register)
         elif event.button.id == "backup":
@@ -443,7 +550,7 @@ class ModelsPane(Vertical):
         status = self.query_one("#models_status", Static)
         status.update(f"Pulling {value} … (this can take a while)")
         try:
-            subprocess.Popen(["ollama", "pull", value])
+            subprocess.Popen(["ollama", "pull", value], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         except OSError as exc:
             status.update(f"Cannot start 'ollama pull': {exc}")
 
@@ -493,8 +600,8 @@ class ModelsPane(Vertical):
 # --------------------------------------------------------------------------
 
 COLUMNS = [
-    ("name", "Benchmark"), ("status", "Status"), ("provider", "Provider"), ("backend", "Backend"),
-    ("model", "Model"), ("runs", "Runs"), ("elapsed", "Elapsed"), ("heuristic_score", "Heuristic"),
+    ("benchmark", "Benchmark"), ("status", "Status"), ("provider", "Provider"), ("backend", "Backend"),
+    ("model", "Model"), ("runs", "Runs"), ("samples", "Tasks"), ("elapsed", "Elapsed"), ("heuristic_score", "Heuristic"),
     ("rating_score", "Score"), ("rating", "Suitability"), ("interpretation", "Interpretation"),
 ]
 
@@ -502,7 +609,7 @@ COLUMNS = [
 class ResultsPane(Vertical):
     def compose(self) -> ComposeResult:
         with Horizontal():
-            yield Input(placeholder="Filter all columns…", id="filter")
+            yield Input(placeholder="Filter…", id="filter")
             yield Button("↻ Refresh", id="refresh")
             yield Button("🌐 Open in browser", id="open_browser")
             yield Button("📊 Open in Excel", id="open_excel")
@@ -546,6 +653,13 @@ class ResultsPane(Vertical):
                     text = text[:57] + "…"
                 cells.append(text)
             table.add_row(*cells)
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if event.data_table.id != "results_table":
+            return
+        key = str(event.column_key)
+        self._rows.sort(key=lambda row: str(row.get(key, "")).lower())
+        self._populate_table(self._rows)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "filter":
@@ -626,6 +740,57 @@ class LeaderboardPane(Vertical):
             self.refresh_board()
 
 
+class AgentMonitorPane(Vertical):
+    """Launcher bridge to the existing Tommy Agent Monitor, without duplicating it."""
+
+    MONITOR = Path(r"C:\GIT\wt-command-center\scripts\agents\agent_monitor_ui.py")
+    COLLECTOR = Path(r"C:\GIT\wt-command-center\scripts\agents\agent-monitor.ps1")
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Existing Tommy Agent Monitor 3.x is kept as the monitoring implementation. "
+            "This tab launches it with the same collector and configuration."
+        )
+        with Horizontal(id="controls"):
+            yield Button("▶ Open monitor", id="open_monitor", variant="primary")
+            yield Button("⏹ Stop monitor", id="stop_monitor", variant="error")
+            yield Button("↻ Check", id="check_monitor")
+        yield Static(id="monitor_status")
+
+    def on_mount(self) -> None:
+        self.check_monitor()
+
+    def check_monitor(self) -> None:
+        status = self.query_one("#monitor_status", Static)
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like '*agent_monitor_ui.py*'} | "
+             "Select-Object -ExpandProperty ProcessId"],
+            capture_output=True, text=True, check=False,
+        )
+        pids = [line.strip() for line in result.stdout.splitlines() if line.strip().isdigit()]
+        status.update(f"Monitor: {'running (PID ' + ', '.join(pids) + ')' if pids else 'not running'}")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "open_monitor":
+            if not self.MONITOR.is_file():
+                self.query_one("#monitor_status", Static).update(f"Monitor not found: {self.MONITOR}")
+                return
+            command = (
+                f"Set-Location -LiteralPath '{self.MONITOR.parent}'; "
+                f"python '{self.MONITOR}' --mode terminal --backend-script '{self.COLLECTOR}' --refresh 2"
+            )
+            subprocess.Popen(["powershell.exe", "-NoExit", "-Command", command])
+        elif event.button.id == "stop_monitor":
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like '*agent_monitor_ui.py*'} | "
+                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                check=False,
+            )
+        self.check_monitor()
+
+
 # --------------------------------------------------------------------------
 # App
 # --------------------------------------------------------------------------
@@ -640,12 +805,24 @@ class BenchmarkTUI(App):
         Binding("3", "show_tab('models')", "Models"),
         Binding("4", "show_tab('results')", "Results"),
         Binding("5", "show_tab('leaderboard')", "Leaderboard"),
+        Binding("6", "show_tab('agent_monitor')", "Agent monitor"),
     ]
     CSS = """
-    Screen { background: $surface; }
-    .field_row { height: 3; }
-    .field_label { width: 26; content-align: left middle; }
+    Screen { background: #0b1420; color: #e8f8ff; }
+    Header, Footer { background: #101f31; color: #dff4ff; }
+    TabbedContent, TabPane { background: #0b1420; }
+    Tab { background: #101f31; color: #9ebcd5; }
+    Tab.-active { background: #173b5a; color: #ffffff; }
+    Input, Select, SelectionList { background: #101f31; color: #e8f8ff; border: round #31577a; }
+    Button { min-width: 12; }
+    .field_row { height: 3; align: left middle; }
+    .field_label { width: 18; content-align: left middle; }
+    .compact_label { width: 8; margin-left: 1; }
     #controls, #fields, #dialog { padding: 0 1; }
+    #config_select, #benchmark_file { width: 1fr; }
+    #model_selection_wrap { height: 1fr; min-height: 8; border: round $panel-lighten-1; padding: 0 1; }
+    #model_selection { height: 1fr; }
+    #filter { width: 30; }
     DataTable { height: 1fr; }
     Log { height: 10; border: round $accent; }
     """
@@ -663,6 +840,8 @@ class BenchmarkTUI(App):
                 yield ResultsPane()
             with TabPane("Leaderboard", id="leaderboard"):
                 yield LeaderboardPane()
+            with TabPane("Agent monitor", id="agent_monitor"):
+                yield AgentMonitorPane()
         yield Footer()
 
     def action_show_tab(self, tab_id: str) -> None:

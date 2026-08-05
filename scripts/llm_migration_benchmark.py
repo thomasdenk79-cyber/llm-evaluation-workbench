@@ -19,6 +19,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -1430,6 +1431,37 @@ def ollama_generate(
                 continue
             raise
     raise RuntimeError(f"Ollama generate failed after retries: {last_error}")
+
+
+def wait_for_ollama(api_url: str, stop_file: Optional[Path] = None) -> bool:
+    """Wait for Ollama readiness instead of generating one error per task."""
+    base_url = api_url.rstrip("/")
+    if base_url.endswith("/api/generate"):
+        base_url = base_url[:-len("/api/generate")]
+    elif base_url.endswith("/api"):
+        base_url = base_url[:-len("/api")]
+    tags_url = base_url + "/api/tags"
+    warned = False
+    root = Path(__file__).resolve().parents[1]
+    pause_file = root / "pause.ini"
+    stop_path = stop_file or root / "stop.ini"
+    while True:
+        if stop_path.exists():
+            return False
+        if pause_file.exists():
+            print(f"[PAUSED] Remove {pause_file} to resume.", flush=True)
+            while pause_file.exists() and not stop_path.exists():
+                time.sleep(3)
+            continue
+        try:
+            with urllib.request.urlopen(tags_url, timeout=5):
+                return True
+        except Exception as exc:
+            if not warned:
+                print(f"[ollama] unavailable ({exc}); retrying every 5s. "
+                      "Use pause.ini to pause or stop.ini to terminate.", flush=True)
+                warned = True
+            time.sleep(5)
 
 
 def ollama_warmup_model(api_url: str, model: str, timeout_sec: int) -> float:
@@ -4025,7 +4057,10 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             return "Local/" + backend.split("/", 1)[1]
         return backend or "Local"
 
-    def grid_role(quality: float, normalized_performance: float, reliability: float, error: str) -> str:
+    def grid_role(quality: Optional[float], normalized_performance: Optional[float],
+                  reliability: Optional[float], error: str) -> str:
+        if quality is None or normalized_performance is None or reliability is None:
+            return ""
         if error or reliability < 0.90:
             return "unreliable for unattended use"
         if quality >= 85 and normalized_performance >= 0.70:
@@ -4036,13 +4071,16 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             return "fast screening runner; coding quality weak"
         return "good coding signal" if quality >= 70 else "coding quality weak"
 
-    def grid_interpretation(quality: float, normalized_performance: float, reliability: float, error: str, role: str) -> str:
+    def grid_interpretation(quality: Optional[float], normalized_performance: Optional[float],
+                            reliability: Optional[float], error: str, role: str) -> str:
         # Longer, numbers-backed sentence for the rightmost "Interpretation" column;
         # kept deliberately distinct from the short "rating" tag so the two columns
         # never show identical text.
         if error:
             short_error = error[:80] + ("…" if len(error) > 80 else "")
             return f"System error during the run ({short_error}) — treat as not usable until re-tested."
+        if quality is None or normalized_performance is None or reliability is None:
+            return ""
         return (
             f"Quality {quality:.0f}%, relative speed at the {normalized_performance * 100:.0f}th percentile "
             f"of this comparison, reliability {reliability * 100:.0f}% — {role}."
@@ -4087,18 +4125,28 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             summary = summary_by_key.get((backend, model), {})
             error = str(raw.get("error", "")).strip() if raw else ""
             status = "error" if error else ("done" if raw else str(source.get("status", "scheduled")).lower())
+            if not raw:
+                if (Path(__file__).resolve().parents[1] / "stop.ini").exists():
+                    status = "stopped"
+                elif (Path(__file__).resolve().parents[1] / "pause.ini").exists():
+                    status = "paused"
             if status == "running-error":
                 status = "warning"
-            if status not in {"scheduled", "running", "done", "error", "warning"}:
+            if status not in {"scheduled", "running", "done", "error", "warning", "paused", "stopped"}:
                 status = "warning" if "error" in status else "scheduled"
-            quality = to_float(raw.get("quality_score", "")) or 0.0 if raw else float(summary.get("quality") or 0.0)
+            measured = bool(raw)
+            quality = (to_float(raw.get("quality_score", "")) or 0.0) if raw else (
+                float(summary.get("quality") or 0.0) if summary else None
+            )
             tps = to_float(raw.get("output_tps", "")) or 0.0 if raw else float(source.get("tps") or 0.0)
             wall = to_float(raw.get("wall_s", "")) if raw else source.get("wall_s")
             if wall is None and raw:
                 wall = (to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0
             perf = tps if tps > 0 else (1.0 / wall if wall and wall > 0 else 0.0)
-            normalized = 1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
-            reliability = 0.0 if error else 1.0
+            normalized = (
+                1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
+            ) if measured else None
+            reliability = (0.0 if error else 1.0) if measured else None
             role = grid_role(quality, normalized, reliability, error)
             task_count = to_int(raw.get("benchmark_task_count", "")) if raw else None
             runs = to_int(raw.get("benchmark_runs", "")) if raw else None
@@ -4106,7 +4154,10 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             runs = runs or (int(run_count_default or 1) if planned else 1)
             # benchmark is the plain fixture display name only; task/run counts are
             # separate sortable/filterable columns instead of being baked into the text.
-            benchmark = str(raw.get("benchmark_name", "") if raw else source.get("benchmark", ""))
+            benchmark = str(
+                (raw.get("benchmark_name") or raw.get("benchmark_display") or raw.get("benchmark_id", ""))
+                if raw else source.get("benchmark", "")
+            )
             started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
             updated = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
             elapsed = str(raw.get("elapsed", "")) if raw and raw.get("elapsed") else (fmt_eta(wall) if wall is not None else str(source.get("elapsed", "")))
@@ -4140,7 +4191,8 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 "tok_s": tok_s, "cpu_percent": cpu_pct, "gpu_percent": gpu_pct,
                 "vram_used_gb": vram_used, "vram_free_gb": vram_free, "ram_gb": ram_used,
                 "system_errors": error, "heuristic_score": quality,
-                "rating_score": quality * normalized * reliability, "rating": role,
+                "rating_score": quality * normalized * reliability if measured and quality is not None and normalized is not None and reliability is not None else None,
+                "rating": role if measured else "",
                 "launch_params": raw.get("launch_params", "") if raw else source.get("launch_params", ""),
                 "interpretation": grid_interpretation(quality, normalized, reliability, error, role),
             })
@@ -4191,11 +4243,14 @@ h1{margin:0 0 4px;font-size:23px;letter-spacing:.2px}
 .tabulator{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px}
 .tabulator .tabulator-header{background:var(--header-bg);color:var(--header-text);border-bottom:2px solid var(--accent)}
 .tabulator .tabulator-col{background:var(--header-bg)}
-.tabulator .tabulator-col-title{color:var(--header-text);font-weight:700;font-size:12px;letter-spacing:.02em}
+.tabulator .tabulator-col-title{color:var(--header-text)!important;font-weight:700;font-size:12px;letter-spacing:.02em}
 .tabulator .tabulator-col-title[draggable="true"]{cursor:grab}
 .tabulator .tabulator-col.dragging-source{opacity:.5}
 .tabulator .tabulator-header-filter input,.tabulator .tabulator-header-filter select{width:100%;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font-size:11.5px}
 .tabulator .tabulator-header-filter input:focus,.tabulator .tabulator-header-filter select:focus{outline:2px solid var(--accent);outline-offset:1px}
+.tabulator .tabulator-header-filter{display:none}
+.tabulator .tabulator-header-filter.filter-visible{display:block}
+.tabulator .tabulator-col.filter-active .tabulator-col-title::after{content:' *';color:var(--accent);font-weight:900}
 .tabulator .tabulator-row{background:var(--panel);color:var(--text);border-bottom:1px solid var(--line)}
 .tabulator .tabulator-row.tabulator-row-even{background:var(--panel-alt)}
 .tabulator .tabulator-row:hover{background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
@@ -4209,6 +4264,8 @@ h1{margin:0 0 4px;font-size:23px;letter-spacing:.2px}
 .status-warning{background:#d97706}
 .status-scheduled{background:#64748b}
 .status-running{background:#2563eb}
+.status-paused{background:#d97706}
+.status-stopped{background:#475569}
 .tier-0{color:var(--muted)}
 .tier-1{color:#8b5cf6;font-weight:700}
 .tier-2{color:#ef4444;font-weight:700}
@@ -4230,7 +4287,7 @@ kbd{background:var(--panel-alt);border:1px solid var(--line);border-radius:4px;p
 const DATA=__GRID_DATA__;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const numFmt=(v,d,suf)=>{if(v===null||v===undefined||v==='')return 'N/A';const n=Number(v);if(Number.isNaN(n))return 'N/A';return n.toFixed(d)+(suf||'');};
-const FIELD_TITLES={benchmark:'Benchmark',status:'Status',provider:'Provider',backend:'Backend',model:'Model',run:'Run',runs:'Runs',samples:'Tasks/run',datetime_run_started:'Started',last_update:'Updated',elapsed:'Elapsed',tok_s:'Tok/s',cpu_percent:'CPU',gpu_percent:'GPU',vram_used_gb:'VRAM used',vram_free_gb:'VRAM free',ram_gb:'RAM',system_errors:'Errors',heuristic_score:'Heuristic',rating_score:'Score',rating:'Suitability',launch_params:'Params',interpretation:'Interpretation'};
+const FIELD_TITLES={benchmark:'Benchmark',status:'Status',provider:'Provider',backend:'Backend',model:'Model',runs:'Runs',samples:'Tasks',datetime_run_started:'Started',last_update:'Updated',elapsed:'Elapsed',tok_s:'Tok/s',cpu_percent:'CPU',gpu_percent:'GPU',vram_used_gb:'VRAM used',vram_free_gb:'VRAM free',ram_gb:'RAM',system_errors:'Errors',heuristic_score:'Heuristic',rating_score:'Score',rating:'Suitability',launch_params:'Params',interpretation:'Interpretation'};
 const statusFormatter=cell=>{const v=String(cell.getValue()??'');return '<span class="status status-'+esc(v)+'">'+esc(v)+'</span>';};
 const tierFormatter=(field,decimals,suffix)=>cell=>{const d=cell.getData();const tier=d[field+'_tier']??0;const v=numFmt(cell.getValue(),decimals,suffix);return '<span class="tier-'+tier+'">'+esc(v)+'</span>';};
 const pctFormatter=cell=>numFmt(cell.getValue(),1,'%');
@@ -4241,13 +4298,12 @@ const paramsTooltip=(e,cell)=>{const raw=String(cell.getValue()??'');if(!raw)ret
 const errorFormatter=cell=>{const v=String(cell.getValue()??'');if(!v)return '';const span=document.createElement('span');span.className='copy';span.title='Click to copy';span.textContent=v.length>60?v.slice(0,60)+'…':v;span.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(v);return span;};
 const columns=[
  {title:'Benchmark',field:'benchmark',headerFilter:'input',minWidth:200},
- {title:'Status',field:'status',formatter:statusFormatter,headerFilter:'list',headerFilterParams:{valuesLookup:true,multiselect:true,clearable:true},hozAlign:'center',width:120},
+ {title:'Status',field:'status',formatter:statusFormatter,headerFilter:'list',headerFilterParams:{values:{'':'Any status',scheduled:'Scheduled',running:'Running',paused:'Paused',stopped:'Stopped',done:'Done',warning:'Warning',error:'Error'},multiselect:true,clearable:true,placeholder:'Any status'},hozAlign:'center',width:120},
  {title:'Provider',field:'provider',headerFilter:'input',width:110},
  {title:'Backend',field:'backend',headerFilter:'input',width:100},
  {title:'Model',field:'model',headerFilter:'input',minWidth:170},
- {title:'Run',field:'run',headerFilter:'input',hozAlign:'center',width:64},
  {title:'Runs',field:'runs',headerFilter:'input',hozAlign:'center',width:64},
- {title:'Tasks/run',field:'samples',headerFilter:'input',hozAlign:'center',width:84},
+ {title:'Tasks',field:'samples',headerFilter:'input',hozAlign:'center',width:84},
  {title:'Started',field:'datetime_run_started',headerFilter:'input',width:110},
  {title:'Updated',field:'last_update',headerFilter:'input',width:110},
  {title:'Elapsed',field:'elapsed',formatter:cell=>{const d=cell.getData();const tier=d.wall_seconds_tier??0;return '<span class="tier-'+tier+'">'+esc(cell.getValue()??'')+'</span>';},headerFilter:'input',hozAlign:'right',width:90},
@@ -4265,7 +4321,7 @@ const columns=[
  {title:'Interpretation',field:'interpretation',headerFilter:'input',minWidth:260}
 ];
 const table=new Tabulator('#grid',{
- data:DATA,layout:'fitDataTable',movableColumns:true,resizableColumnFit:true,
+ data:DATA,layout:'fitDataStretch',movableColumns:true,resizableColumnFit:true,
  columnDefaults:{headerSort:true,headerWordWrap:true},
  columns:columns,selectableRows:false,groupStartOpen:true,pagination:false,
  height:'calc(100vh - 250px)',virtualDom:true,placeholder:'No rows match the current filters'
@@ -4282,7 +4338,7 @@ const renderChips=()=>{
   chip.innerHTML=esc(FIELD_TITLES[field]||field)+' <span class="x" title="Remove">×</span>';
   chip.querySelector('.x').onclick=()=>{groupFields=groupFields.filter(f=>f!==field);applyGroup();};
   chip.ondragstart=ev=>{ev.dataTransfer.setData('text/chip-index',String(idx));chip.classList.add('dragging');};
-  chip.ondragend=()=>chip.classList.remove('dragging');
+  chip.ondragend=ev=>{chip.classList.remove('dragging');if(ev.dataTransfer.dropEffect==='none'){groupFields=groupFields.filter(f=>f!==field);applyGroup();}};
   chip.ondragover=ev=>ev.preventDefault();
   chip.ondrop=ev=>{
    ev.preventDefault();
@@ -4298,6 +4354,13 @@ const renderChips=()=>{
  });
 };
 const applyGroup=()=>{table.setGroupBy(groupFields.length?groupFields:false);renderChips();};
+const syncFilterMarks=()=>{
+ table.getColumns().forEach(col=>{
+  const filter=col.getElement().querySelector('.tabulator-header-filter');
+  const value=filter?.querySelector('input,select')?.value||'';
+  col.getElement().classList.toggle('filter-active',Boolean(value));
+ });
+};
 groupbar.ondragover=ev=>{ev.preventDefault();groupbar.classList.add('dragover');};
 groupbar.ondragleave=()=>groupbar.classList.remove('dragover');
 groupbar.ondrop=ev=>{
@@ -4315,9 +4378,14 @@ table.on('tableBuilt',()=>{
   titleEl.title='Drag onto the group bar below to group by '+(FIELD_TITLES[col.getField()]||col.getField());
   titleEl.addEventListener('dragstart',ev=>{ev.dataTransfer.setData('text/field',col.getField());el.classList.add('dragging-source');});
   titleEl.addEventListener('dragend',()=>el.classList.remove('dragging-source'));
+  titleEl.addEventListener('dblclick',()=>{
+   const filter=el.querySelector('.tabulator-header-filter');
+   if(filter)filter.classList.toggle('filter-visible');
+  });
  });
  renderChips();
 });
+table.on('dataFiltered',syncFilterMarks);
 const applySearch=()=>{
  const q=document.getElementById('search').value.toLowerCase();
  if(!q){table.clearFilter();return;}
@@ -4325,7 +4393,6 @@ const applySearch=()=>{
 };
 document.getElementById('search').oninput=applySearch;
 document.getElementById('theme').onchange=e=>{document.body.dataset.theme=e.target.value;};
-document.getElementById('compact').onclick=()=>{document.body.classList.toggle('compact');table.redraw(true);};
 document.getElementById('reset').onclick=()=>{
  document.getElementById('search').value='';
  table.clearFilter(true);
@@ -4358,7 +4425,6 @@ document.getElementById('reset').onclick=()=>{
         "<option value=\"terminal\">Terminal</option>"
         "<option value=\"high-contrast\">High contrast</option>"
         "</select>"
-        "<button id=\"compact\">Compact/autofit</button>"
         "<button id=\"reset\">Reset filters &amp; grouping</button>"
         "</div>"
         "<div id=\"groupbar\"><span class=\"hint\">Drag a column header here to group by it (drop another to add a second/third grouping level; drag chips to reorder).</span></div>"
@@ -4612,6 +4678,9 @@ def main() -> int:
                         startup_sec: Optional[float] = None
                         shutdown_sec: Optional[float] = None
                         model_result_indexes: List[int] = []
+                        if not wait_for_ollama(args.ollama_url):
+                            print("[STOP] Ollama wait interrupted by stop.ini.", flush=True)
+                            return 130
                         try:
                             startup_sec = ollama_warmup_model(args.ollama_url, model, args.timeout_sec)
                             print(f"[ollama] {model} warmup: {startup_sec:.3f}s")
@@ -4633,6 +4702,9 @@ def main() -> int:
                                 model_result_indexes.append(len(results) - 1)
                                 if not (result.error or "").strip():
                                     completed_keys.add(("ollama", model, str(case["id"]), run_id))
+                                elif "ollama" in result.error.lower() and not wait_for_ollama(args.ollama_url):
+                                    print("[STOP] Ollama wait interrupted by stop.ini.", flush=True)
+                                    return 130
                                 save_progress_snapshot(results, args, run_tag)
                         try:
                             shutdown_sec = ollama_unload_model(args.ollama_url, model, args.timeout_sec)

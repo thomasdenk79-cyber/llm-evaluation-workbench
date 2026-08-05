@@ -70,6 +70,8 @@ def _parser() -> argparse.ArgumentParser:
                    help="Presence terminates the active suite (unlike pause.ini).")
     p.add_argument("--lock-file", type=Path)
     p.add_argument("--interactive", action="store_true", help="Use a dependency-free terminal selector.")
+    p.add_argument("--show-matrix", action="store_true",
+                   help="Print the expanded [[matrix]] wildcard plan (backend/model/benchmark) and exit; no run.")
     p.add_argument("--list-models", action="store_true", help="List installed Ollama models and configured GGUFs.")
     p.add_argument("--pull-ollama", metavar="MODEL", help="Pull an explicitly selected Ollama model.")
     p.add_argument("--llama-install", metavar="NAME=PATH", help="Register an existing GGUF path; never downloads.")
@@ -262,7 +264,7 @@ def _config(path: Path | None) -> dict[str, Any]:
 
 
 def _value(args: argparse.Namespace, cfg: dict[str, Any], name: str, default: Any = None) -> Any:
-    value = getattr(args, name)
+    value = getattr(args, name, None)
     return value if value is not None else cfg.get(name, default)
 
 
@@ -425,21 +427,25 @@ def _dashboard(detail: Path, planned: list[dict[str, str]]) -> None:
     detail.with_suffix(".html").write_text(page, encoding="utf-8")
 
 
-def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], work_dir: Path) -> list[str]:
+def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], work_dir: Path,
+                     overrides: dict[str, Any] | None = None) -> list[str]:
+    overrides = overrides or {}
     if suite in RUNNERS:
         command = [sys.executable, str(Path(__file__).with_name(RUNNERS[suite])), *args.legacy_args]
         return command
     command = [sys.executable, str(Path(__file__).with_name("llm_migration_benchmark.py"))]
     if suite != "migration":
         command += ["--benchmark-id", suite]
-    command += ["--backend", _value(args, cfg, "backend", "both"),
+    command += ["--backend", str(overrides.get("backend") or _value(args, cfg, "backend", "both")),
                "--output-dir", str(work_dir), "--report-file", str(ROOT / "docs" / "project" / "benchmark_report.md"),
                "--runs", str(_value(args, cfg, "runs", 1)),
                "--resume", ("off" if _value(args, cfg, "run", "resume") == "force"
                             else _value(args, cfg, "resume", "auto"))]
     command += list(args.legacy_args)
-    backend = _value(args, cfg, "backend", "both")
-    models = _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", []))
+    backend = str(overrides.get("backend") or _value(args, cfg, "backend", "both"))
+    models = overrides.get("models")
+    if models is None:
+        models = _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", []))
     if backend in ("ollama", "both") and models:
         resolved = (
             _ollama_models(models, str(_value(args, cfg, "ollama_url", "http://127.0.0.1:11434")))
@@ -459,14 +465,118 @@ def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], w
     runner_args = _value(args, cfg, "runner_args", [])
     if isinstance(runner_args, str):
         runner_args = shlex.split(runner_args)
-    if isinstance(runner_args, list):
-        command += [str(value) for value in runner_args]
+    runner_args = [str(value) for value in runner_args] if isinstance(runner_args, list) else []
+    benchmark_file = overrides.get("benchmark_file")
+    if benchmark_file:
+        if "--benchmark-file" in runner_args:
+            idx = runner_args.index("--benchmark-file")
+            runner_args[idx + 1] = benchmark_file
+        else:
+            runner_args += ["--benchmark-file", benchmark_file]
+    command += runner_args
     return command
+
+
+# --------------------------------------------------------------------------
+# Wildcard campaign matrix: `[[matrix]]` array-of-tables in a campaign TOML,
+# each entry with `models` / `benchmarks` / `backend` fnmatch-style patterns,
+# expanded into concrete (backend, benchmark_file, [models]) execution
+# groups. Purely additive: a config with no `[[matrix]]` table behaves
+# exactly as before. See docs/project/requirements.md §5.
+# --------------------------------------------------------------------------
+
+def _load_matrix(config_path: Path | None) -> list[dict[str, Any]]:
+    if not config_path or tomllib is None or not config_path.exists():
+        return []
+    with config_path.open("rb") as handle:
+        data = tomllib.load(handle)
+    matrix = data.get("matrix", [])
+    return matrix if isinstance(matrix, list) else []
+
+
+def _available_benchmark_files() -> dict[str, Path]:
+    """Map benchmark stem -> path, from the repo's `benchmarks/` directory."""
+    out: dict[str, Path] = {}
+    benchmarks_dir = ROOT / "benchmarks"
+    if benchmarks_dir.is_dir():
+        for path in benchmarks_dir.glob("*.json"):
+            out[path.stem] = path
+    scripts_benchmarks = ROOT / "scripts" / "benchmarks"
+    if scripts_benchmarks.is_dir():
+        for path in scripts_benchmarks.glob("*.json"):
+            out.setdefault(path.stem, path)
+    return out
+
+
+def expand_matrix(matrix: list[dict[str, Any]], args: argparse.Namespace, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand `[[matrix]]` entries into concrete (backend, benchmark_file, models) groups.
+
+    Each matrix entry may specify `models` (fnmatch patterns matched against
+    installed Ollama tags and/or the configured llama.cpp GGUF registry),
+    `benchmarks` (fnmatch patterns matched against benchmark fixture stems
+    under `benchmarks/`), and `backend` (one or more of `ollama`,
+    `llama_cpp`; defaults to the campaign's configured backend). Missing
+    `models`/`benchmarks` in an entry means "all configured" for that axis.
+    """
+    if not matrix:
+        return []
+    ollama_url = str(_value(args, cfg, "ollama_url", "http://127.0.0.1:11434"))
+    all_ollama_models = _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", []))
+    gguf_names = [spec.split("=", 1)[0].strip() for spec in _split(_value(args, cfg, "llama_models", [])) if "=" in spec]
+    benchmark_files = _available_benchmark_files()
+    groups: list[dict[str, Any]] = []
+    for entry in matrix:
+        backends = _split(entry.get("backend", _value(args, cfg, "backend", "ollama")))
+        model_patterns = _split(entry.get("models", ["*"]))
+        benchmark_patterns = _split(entry.get("benchmarks", ["*"]))
+        matched_benchmarks = sorted({
+            stem for pattern in benchmark_patterns for stem in benchmark_files
+            if fnmatch.fnmatchcase(stem, pattern)
+        }) or list(benchmark_files.keys())
+        for backend in backends:
+            if backend == "ollama":
+                has_wildcard = any("*" in p or "?" in p for p in model_patterns)
+                if has_wildcard:
+                    try:
+                        pool = _ollama_models(model_patterns, ollama_url)
+                    except RuntimeError as exc:
+                        print(f"[matrix] Warning: could not query Ollama tags for pattern "
+                              f"{model_patterns} ({exc}); this group will be skipped.")
+                        pool = []
+                else:
+                    pool = [m for m in model_patterns if m in all_ollama_models or all_ollama_models == []]
+                    if not pool:
+                        pool = list(model_patterns)
+            elif backend == "llama_cpp":
+                pool = sorted({name for pattern in model_patterns for name in gguf_names
+                              if fnmatch.fnmatchcase(name, pattern)}) or gguf_names
+            else:
+                pool = list(model_patterns)
+            for benchmark_stem in matched_benchmarks:
+                groups.append({
+                    "backend": backend,
+                    "models": pool,
+                    "benchmark_stem": benchmark_stem,
+                    "benchmark_file": str(benchmark_files[benchmark_stem]) if benchmark_stem in benchmark_files else None,
+                })
+    return groups
 
 
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if not raw:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            # Interactive terminal, no flags: open the Textual control center
+            # instead of the old Tkinter dialog (see
+            # docs/project/tui-web-architecture.md). Falls back to the
+            # previous behavior if Textual is unavailable for any reason, so
+            # this never becomes a hard requirement for local automation.
+            try:
+                from llm_bench_tui import main as tui_main
+            except Exception as exc:
+                print(f"Textual TUI unavailable ({exc}); falling back to the classic prompt.")
+            else:
+                return tui_main()
         raw = ["--config", str(DEFAULT_CONFIG)] if DEFAULT_CONFIG.exists() else (_gui() or [])
         if not raw:
             return 2
@@ -476,6 +586,18 @@ def main(argv: list[str] | None = None) -> int:
     managed = _model_management(args, cfg)
     if managed is not None:
         return managed
+    if args.show_matrix:
+        matrix = _load_matrix(config_path)
+        if not matrix:
+            print(f"No [[matrix]] table found in {config_path or '(no config)'}; nothing to expand.")
+            return 0
+        groups = expand_matrix(matrix, args, cfg)
+        print(f"Expanded {len(matrix)} [[matrix]] entries into {len(groups)} run groups:")
+        for group in groups:
+            models_display = ", ".join(group["models"]) or "(none matched)"
+            bench_display = group["benchmark_file"] or f"{group['benchmark_stem']} (file not found)"
+            print(f"  backend={group['backend']:<10} benchmark={bench_display:<40} models=[{models_display}]")
+        return 0
     pause_file = Path(_value(args, cfg, "pause_file", DEFAULT_PAUSE_FILE))
     stop_file = Path(_value(args, cfg, "stop_file", DEFAULT_STOP_FILE))
     lock_file = Path(_value(args, cfg, "lock_file", DEFAULT_LOCK_FILE))
@@ -529,13 +651,16 @@ def main(argv: list[str] | None = None) -> int:
     if not _acquire_lock(lock_file):
         return 2
     try:
-        return _main_locked(args, cfg, pause_file, stop_file, lock_file)
+        return _main_locked(args, cfg, pause_file, stop_file, lock_file, config_path)
     finally:
         _release_lock(lock_file)
 
 
 def _main_locked(args: argparse.Namespace, cfg: dict[str, Any], pause_file: Path,
-                 stop_file: Path, lock_file: Path) -> int:
+                 stop_file: Path, lock_file: Path, config_path: Path | None = None) -> int:
+    matrix = _load_matrix(config_path)
+    if matrix:
+        return _main_locked_matrix(args, cfg, pause_file, stop_file, lock_file, matrix)
     suites = _split(_value(args, cfg, "suites", args.legacy_suite or "migration"))
     detail = Path(_value(args, cfg, "detail_csv", DEFAULT_DETAIL))
     if not detail.is_absolute():
@@ -576,6 +701,92 @@ def _main_locked(args: argparse.Namespace, cfg: dict[str, Any], pause_file: Path
                 if backend in ("ollama", "both") and "ollama" in str(exc).lower():
                     print("Ollama is unavailable; install/start it from https://ollama.com/download.")
                 if backend in ("llama_cpp", "both"):
+                    print("llama.cpp is unavailable; install llama-server/llama-cli and configure --llama-server.")
+                item["status"] = f"failed ({exc})"
+                _dashboard(detail, planned)
+                return 1
+            if code == 130:
+                item["status"] = "stopped"
+                _dashboard(detail, planned)
+                _unload_ollama()
+                return 0
+            if code:
+                item["status"] = f"failed ({code})"
+                _dashboard(detail, planned)
+                return code
+            after = sorted(
+                (p for p in work_dir.glob("migration_llm_bench_*.csv") if p not in before),
+                key=lambda p: p.stat().st_mtime,
+            )
+            if after or code == 0:
+                _append_unified(detail, _read_runner_csvs(work_dir))
+            item["status"] = "completed"; _dashboard(detail, planned)
+        finally:
+            _stop_hwinfo(_value(args, cfg, "hwinfo_stop_command"), str(_value(args, cfg, "hwinfo_executable", "")), process)
+    print(f"Unified detail CSV: {detail}")
+    print(f"Unified dashboard: {detail.with_suffix('.html')}")
+    return 0
+
+
+def _main_locked_matrix(args: argparse.Namespace, cfg: dict[str, Any], pause_file: Path,
+                         stop_file: Path, lock_file: Path, matrix: list[dict[str, Any]]) -> int:
+    """Execute a `[[matrix]]`-expanded wildcard campaign.
+
+    Mirrors `_main_locked`'s control-flow (pause/stop checks, dashboard,
+    unified CSV) but plans one runner invocation per expanded
+    (backend, benchmark_file, models) group instead of one per suite, since
+    a matrix entry can fan out into many such groups.
+    """
+    groups = expand_matrix(matrix, args, cfg)
+    if not groups:
+        print("Matrix expanded to zero run groups (no models/benchmarks matched); nothing to do.")
+        return 0
+    detail = Path(_value(args, cfg, "detail_csv", DEFAULT_DETAIL))
+    if not detail.is_absolute():
+        detail = ROOT / detail
+    run_mode = _value(args, cfg, "run", "resume")
+    run_id: str | None = None
+    if run_mode == "force":
+        run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        detail = detail.with_name(f"{detail.stem}_run_{run_id}{detail.suffix}")
+        print(f"[FORCE] Writing a new run output: {detail}")
+    planned = [{
+        "suite": g["benchmark_stem"], "backend": g["backend"],
+        "model": ", ".join(g["models"]) or "(none matched)", "status": "planned",
+    } for g in groups]
+    work_dir = detail.parent / ".master_runs" / run_id if run_id else detail.parent / ".master_runs"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    _append_unified(detail, _read_runner_csvs(work_dir))
+    _dashboard(detail, planned)
+    for item, group in zip(planned, groups):
+        _append_unified(detail, _read_runner_csvs(work_dir))
+        if stop_file.exists():
+            _unload_ollama()
+            item["status"] = "stopped"
+            _dashboard(detail, planned)
+            return 0
+        if pause_file.exists():
+            _wait_for_resume(pause_file)
+        if not group["models"]:
+            item["status"] = "skipped (no models matched)"; _dashboard(detail, planned)
+            continue
+        if not group["benchmark_file"]:
+            item["status"] = f"skipped ({group['benchmark_stem']} fixture file not found)"; _dashboard(detail, planned)
+            continue
+        item["status"] = "running"; _dashboard(detail, planned)
+        process = _hwinfo(_value(args, cfg, "hwinfo_start_command"), str(_value(args, cfg, "hwinfo_executable", "")))
+        before = {p for p in work_dir.glob("migration_llm_bench_*.csv") if not p.name.endswith("_inprogress.csv")}
+        try:
+            command = _runner_command("migration", args, cfg, work_dir, overrides={
+                "backend": group["backend"], "models": group["models"], "benchmark_file": group["benchmark_file"],
+            })
+            print("Running:", " ".join(shlex.quote(part) for part in command))
+            try:
+                code = _run_runner(command, pause_file, stop_file, work_dir, detail)
+            except OSError as exc:
+                if group["backend"] == "ollama" and "ollama" in str(exc).lower():
+                    print("Ollama is unavailable; install/start it from https://ollama.com/download.")
+                if group["backend"] == "llama_cpp":
                     print("llama.cpp is unavailable; install llama-server/llama-cli and configure --llama-server.")
                 item["status"] = f"failed ({exc})"
                 _dashboard(detail, planned)

@@ -3960,10 +3960,12 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             )
 
     report_html_path = report_path[:-3] + ".html" if report_path.lower().endswith(".md") else (report_path + ".html")
-    raw_by_model: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    tabulator_dir = os.path.join(os.path.dirname(__file__), "..", "docs", "project", "vendor", "tabulator")
+    tabulator_rel = os.path.relpath(tabulator_dir, report_dir).replace(os.sep, "/")
+    raw_by_model = {}
     for raw in all_rows:
         raw_by_model.setdefault((raw.get("backend", ""), raw.get("model", "")), []).append(raw)
-    performance_values: List[float] = []
+    performance_values = []
     for row in model_live_rows:
         tps_value, wall_value = row.get("tps"), row.get("wall_s")
         if isinstance(tps_value, (int, float)) and tps_value > 0:
@@ -3972,151 +3974,95 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             performance_values.append(1.0 / float(wall_value))
     perf_lo, perf_hi = (min(performance_values), max(performance_values)) if performance_values else (0.0, 1.0)
 
-    def provider_for(
-        backend: str,
-        server_executable: str = "",
-        launch_profile: str = "",
-        launch_params: str = "",
-    ) -> str:
-        backend_key = (backend or "").lower()
-        if backend_key == "siemens":
-            return "Siemens"
-        if backend_key in {"github", "copilot"}:
+    def grid_provider(backend: str, raw: Dict[str, str]) -> str:
+        key = (backend or "").lower()
+        if key in {"github", "copilot"}:
             return "GitHub"
-        if backend_key == "ollama":
+        if key == "siemens":
+            return "Siemens"
+        if key == "ollama":
             return "Ollama"
-        if backend_key == "llama_cpp":
-            provenance = " ".join((server_executable, launch_profile, launch_params)).lower()
+        if key == "llama_cpp":
+            provenance = " ".join(raw.get(k, "") for k in ("server_executable", "launch_profile", "launch_params")).lower()
             return "ik" if "ik" in provenance or "ik_llama" in provenance else "upstream"
-        if backend_key == "local":
+        if key == "local":
             return "Local"
-        if backend_key.startswith("local/"):
-            return "Local/" + (backend or "").split("/", 1)[1]
+        if key.startswith("local/"):
+            return "Local/" + backend.split("/", 1)[1]
         return backend or "Local"
 
-    def role_class(quality: float, normalized_performance: float, reliability: float, error: str = "") -> str:
+    def grid_role(quality: float, normalized_performance: float, reliability: float, error: str) -> str:
         if error or reliability < 0.90:
             return "unreliable for unattended use"
-        if quality >= 85.0 and normalized_performance >= 0.70:
+        if quality >= 85 and normalized_performance >= 0.70:
             return "high quality signal; architecture/reviewer candidate"
-        if quality >= 75.0 and normalized_performance < 0.50:
+        if quality >= 75 and normalized_performance < 0.50:
             return "good coding signal; slower"
-        if quality < 60.0 and normalized_performance >= 0.70:
+        if quality < 60 and normalized_performance >= 0.70:
             return "fast screening runner; coding quality weak"
-        if quality >= 70.0:
-            return "good coding signal"
-        return "coding quality weak"
+        return "good coding signal" if quality >= 70 else "coding quality weak"
 
-    def grid_rows() -> List[Dict[str, object]]:
-        rows: List[Dict[str, object]] = []
-        task_count = len(BENCH_TASKS)
-        run_count = int(run_count_default or 1)
-        sources: List[Tuple[Dict[str, str], Optional[Dict[str, object]]]] = []
-        for raw in all_rows:
-            sources.append((raw, None))
+    def grid_rows():
+        result = []
         raw_keys = {(r.get("backend", ""), r.get("model", "")) for r in all_rows}
-        for planned in model_live_rows:
-            key = (str(planned.get("backend", "")), str(planned.get("model", "")))
-            if key not in raw_keys:
-                sources.append(({}, planned))
+        sources = [(r, None) for r in all_rows]
+        sources.extend(({}, p) for p in model_live_rows if (str(p.get("backend", "")), str(p.get("model", ""))) not in raw_keys)
         for raw, planned in sources:
-            source: Dict[str, object] = planned or raw
+            source = planned or raw
             backend, model = str(source.get("backend", "")), str(source.get("model", ""))
             summary = summary_by_key.get((backend, model), {})
-            launch_params = str(raw.get("launch_params", "") if raw else source.get("launch_params", ""))
-            server_executable = str(raw.get("server_executable", "") if raw else source.get("server_executable", ""))
-            launch_profile = str(raw.get("launch_profile", "") if raw else source.get("launch_profile", ""))
-            error_text = str(raw.get("error", "")).strip() if raw else ""
-            raw_status = str(raw.get("status", "")).lower() if raw else str(source.get("status", "scheduled")).lower()
-            status = "error" if error_text else ("running" if raw_status == "running" else ("done" if raw else raw_status))
+            error = str(raw.get("error", "")).strip() if raw else ""
+            status = "error" if error else ("done" if raw else str(source.get("status", "scheduled")).lower())
             if status == "running-error":
                 status = "warning"
-            elif status not in {"scheduled", "running", "done", "error", "warning"}:
+            if status not in {"scheduled", "running", "done", "error", "warning"}:
                 status = "warning" if "error" in status else "scheduled"
-            quality = (to_float(raw.get("quality_score", "")) or 0.0) if raw else summary.get("quality")
-            reliability = 0.0 if error_text else 1.0
-            tps = (to_float(raw.get("output_tps", "")) or 0.0) if raw else float(source.get("tps") or 0.0)
-            wall_seconds = (
-                (to_float(raw.get("wall_s", "")) or ((to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0))
-                if raw else source.get("wall_s")
-            )
-            perf = tps
-            if perf <= 0 and wall_seconds:
-                perf = 1.0 / float(wall_seconds)
-            normalized_perf = 1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
-            rating_score = (float(quality or 0.0) / 100.0) * normalized_perf * reliability * 100.0
-            role = role_class(float(quality or 0.0), normalized_perf, reliability, error_text)
-            benchmark = str((raw.get("benchmark_name") if raw else source.get("benchmark")) or (benchmark_names[0] if benchmark_names else ""))
-            row_task_count = to_int(raw.get("benchmark_task_count", "")) if raw else None
-            row_run_count = to_int(raw.get("benchmark_runs", "")) if raw else None
-            row_task_count = row_task_count or (task_count if planned else 1)
-            row_run_count = row_run_count or (run_count if planned else 1)
-            benchmark_display = (
-                f"{benchmark} — {row_task_count} task × {row_run_count} runs"
-                if benchmark
-                else ""
-            )
-            sample_text = (
-                f"{raw.get('run', '')}/{row_run_count}" if raw and raw.get("run", "") else
-                str(source.get("progress", "0/?"))
-            )
-            run_started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
-            last_update = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
-            errors = [error_text] if error_text else []
-            rows.append({
-                "benchmark": benchmark_display,
-                "status": status,
-                "provider": provider_for(backend, server_executable, launch_profile, launch_params),
-                "backend": backend,
-                "model": model,
-                "run": raw.get("run", "") if raw else "",
-                "datetime_run_started": fmt_clock_or_date(run_started, report_day),
-                "last_update": fmt_clock_or_date(last_update, report_day),
-                "elapsed": (
-                    str(raw.get("elapsed", ""))
-                    if raw and raw.get("elapsed", "")
-                    else (
-                        fmt_eta((to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0)
-                        if raw and to_float(raw.get("wall_ms", "")) is not None
-                        else str(source.get("elapsed", ""))
-                    )
-                ),
-                "wall_seconds": wall_seconds,
-                "samples": sample_text,
+            quality = to_float(raw.get("quality_score", "")) or 0.0 if raw else float(summary.get("quality") or 0.0)
+            tps = to_float(raw.get("output_tps", "")) or 0.0 if raw else float(source.get("tps") or 0.0)
+            wall = to_float(raw.get("wall_s", "")) if raw else source.get("wall_s")
+            if wall is None and raw:
+                wall = (to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0
+            perf = tps if tps > 0 else (1.0 / wall if wall and wall > 0 else 0.0)
+            normalized = 1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
+            reliability = 0.0 if error else 1.0
+            role = grid_role(quality, normalized, reliability, error)
+            task_count = to_int(raw.get("benchmark_task_count", "")) if raw else None
+            runs = to_int(raw.get("benchmark_runs", "")) if raw else None
+            task_count = task_count or (len(BENCH_TASKS) if planned else 1)
+            runs = runs or (int(run_count_default or 1) if planned else 1)
+            benchmark = str(raw.get("benchmark_name", "") if raw else source.get("benchmark", ""))
+            started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
+            updated = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
+            elapsed = str(raw.get("elapsed", "")) if raw and raw.get("elapsed") else (fmt_eta(wall) if wall is not None else str(source.get("elapsed", "")))
+            result.append({
+                "benchmark": f"{benchmark} — {task_count} task × {runs} runs",
+                "status": status, "provider": grid_provider(backend, raw), "backend": backend, "model": model,
+                "run": raw.get("run", "") if raw else "", "datetime_run_started": fmt_clock_or_date(started, report_day),
+                "last_update": fmt_clock_or_date(updated, report_day), "elapsed": elapsed, "wall_seconds": wall,
+                "samples": f"{raw.get('run', '')}/{runs}" if raw else str(source.get("progress", "0/?")),
                 "tok_s": raw.get("output_tps") if raw else source.get("tps"),
                 "cpu_percent": raw.get("avg_cpu_pct") if raw else source.get("avg_cpu"),
                 "gpu_percent": raw.get("avg_gpu_pct") if raw else source.get("avg_gpu"),
-                "vram_used_gb": ((to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (source.get("used_vram_gb") if planned else "")),
-                "vram_free_gb": raw.get("vram_free_gb", "") if raw else summary.get("vram_free_gb", ""),
-                "ram_gb": ((to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (source.get("used_ram_gb") if planned else "")),
-                "system_errors": error_text,
-                "heuristic_score": quality,
-                "quality_score": "N/A (same as heuristic score)",
-                "rating_score": rating_score,
-                "rating": role,
-                "launch_params": launch_params,
-                "interpretation": role,
+                "vram_used_gb": (to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (source.get("used_vram_gb") if planned else ""),
+                "vram_free_gb": raw.get("vram_free_gb", "") if raw else "",
+                "ram_gb": (to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (source.get("used_ram_gb") if planned else ""),
+                "system_errors": error, "heuristic_score": quality, "quality_score": "N/A (same as heuristic score)",
+                "rating_score": quality * normalized * reliability, "rating": role, "launch_params": raw.get("launch_params", "") if raw else source.get("launch_params", ""), "interpretation": role,
             })
-        return rows
-
+        return result
     grid_data = json.dumps(grid_rows(), ensure_ascii=False).replace("</", "<\\/")
     eta_text = fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else "n/a"
     html_lines = [
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-        "<title>Benchmark report</title><style>",
-        ":root{color-scheme:dark;--bg:#08111f;--panel:#10213a;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9;--accent:#38bdf8}",
-        "*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.4 Segoe UI,Arial,sans-serif}",
-        "header{padding:20px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#17385b,var(--panel))}",
-        "h1{margin:0 0 5px;font-size:25px}.muted{color:var(--muted)}.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.kpi{padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}",
-        ".toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#162d4a;color:var(--text)}",
-        ".grid-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}.grid{width:100%;min-width:2300px;border-collapse:collapse}.grid th{position:sticky;top:0;background:#1d4166;cursor:pointer;white-space:nowrap}.grid th,.grid td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.compact .grid th,.compact .grid td{padding:3px 5px;font-size:12px}.grid tbody tr:hover{background:#143252}.status{font-weight:700;text-transform:uppercase}.status-done{color:#6ee7b7}.status-error,.status-warning{color:#fda4af}.status-running{color:#7dd3fc}.status-scheduled{color:#cbd5e1}.params{max-width:340px;white-space:pre-wrap;word-break:break-word}.copy{cursor:pointer;text-decoration:underline dotted}.group{background:#153b5e;font-weight:700}",
-        "</style></head><body><header><h1>Benchmark series status</h1><div class=\"muted\">One offline grid for current and completed runs · generated " + html.escape(generated) + "</div></header>",
+        "<title>Benchmark report</title>",
+        f"<link rel=\"stylesheet\" href=\"{html.escape(tabulator_rel)}/tabulator.min.css\">",
+        "<style>:root{color-scheme:dark;--bg:#08111f;--panel:#10213a;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9}*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.4 Segoe UI,Arial,sans-serif}header{padding:20px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#17385b,var(--panel))}h1{margin:0 0 5px;font-size:25px}.muted{color:var(--muted)}.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.kpi{padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#162d4a;color:var(--text)}#grid{height:calc(100vh - 220px);min-height:420px}.tabulator{background:var(--panel);border:1px solid var(--line)}.tabulator .tabulator-header{background:#1d4166;color:var(--text)}.tabulator .tabulator-row{background:var(--panel);color:var(--text)}.tabulator .tabulator-row:nth-child(even){background:#122941}.tabulator .tabulator-row:hover{background:#143b5e}.tabulator .tabulator-cell{white-space:normal}.status{font-weight:700;text-transform:uppercase}.status-done{color:#6ee7b7}.status-error,.status-warning{color:#fda4af}.status-running{color:#7dd3fc}.status-scheduled{color:#cbd5e1}.params{max-width:340px;white-space:pre-wrap;word-break:break-word}.copy{cursor:pointer;text-decoration:underline dotted}.compact .tabulator-cell,.compact .tabulator-col{padding:3px 5px;font-size:12px}</style></head><body>",
+        "<header><h1>Benchmark series status</h1><div class=\"muted\">One offline Tabulator grid for current and completed runs · generated " + html.escape(generated) + "</div></header>",
         f"<section class=\"kpis\"><div class=\"kpi\"><b>Progress</b><br>{html.escape(progress_display)}</div><div class=\"kpi\"><b>Calculated ETA / remaining</b><br>{html.escape(eta_text)}</div></section>",
-        "<div class=\"toolbar\"><input id=\"search\" placeholder=\"Filter all columns…\"><select id=\"status\" multiple size=\"1\" title=\"Status filter (Ctrl-click for multiple)\"><option value=\"scheduled\">scheduled</option><option value=\"running\">running</option><option value=\"done\">done</option><option value=\"error\">error</option><option value=\"warning\">warning</option></select><select id=\"group\" multiple size=\"1\" title=\"Multi-column grouping (Ctrl-click for multiple)\"><option value=\"benchmark\">Benchmark</option><option value=\"provider\">Provider</option><option value=\"backend\">Backend</option><option value=\"model\">Model</option></select><button id=\"compact\">Compact/autofit</button></div>",
-        "<div class=\"grid-wrap\"><table class=\"grid\" id=\"grid\"><thead><tr>" + "".join(f"<th data-key=\"{html.escape(k)}\">{html.escape(label)}</th>" for k, label in [
-            ("benchmark","Benchmark name"),("status","Status"),("provider","Provider"),("backend","Backend"),("model","Model"),("run","Run"),("datetime_run_started","Date/time — run started"),("last_update","Last update"),("elapsed","Elapsed"),("wall_seconds","Wall seconds"),("samples","Samples"),("tok_s","Tok/s"),("cpu_percent","CPU%"),("gpu_percent","GPU%"),("vram_used_gb","VRAM used GB"),("vram_free_gb","VRAM free GB"),("ram_gb","RAM GB"),("system_errors","System errors / error text"),("heuristic_score","Heuristic score"),("quality_score","Quality score"),("rating_score","Rating score"),("rating","Rating"),("launch_params","Launch params JSON"),("interpretation","Interpretation")]) + "</tr><tr id=\"column-filters\"></tr></thead><tbody></tbody></table></div>",
-        "<script>const DATA=" + grid_data + ";let sortKey='benchmark',asc=true,compact=false;const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));const val=(r,k)=>r[k]??'';function render(){let q=document.getElementById('search').value.toLowerCase(),ss=[...document.getElementById('status').selectedOptions].map(x=>x.value),g=[...document.getElementById('group').selectedOptions].map(x=>x.value);let a=DATA.filter(r=>(!ss.length||ss.includes(r.status))&&(!q||Object.values(r).some(v=>String(v).toLowerCase().includes(q))));a.sort((x,y)=>{let c=String(val(x,sortKey)).localeCompare(String(val(y,sortKey)),undefined,{numeric:true});return asc?c:-c});if(g.length){let out=[],previous=[];a.forEach(r=>{let key=g.map(k=>r[k]);let changed=key.some((v,i)=>v!==previous[i]);if(changed){out.push({__group:key.join(' › ')});previous=key}out.push(r)});a=out}let b=document.querySelector('#grid tbody');b.innerHTML=a.map(r=>r.__group?`<tr class=\"group\"><td colspan=\"24\">${esc(r.__group)}</td></tr>`:`<tr>${Object.keys(DATA[0]||{}).filter(k=>k!=='__group').map(k=>`<td class=\"${k==='status'?'status status-'+esc(r[k]):''}\">${k==='launch_params'?`<details><summary>show</summary><pre class=\"params\">${esc(r[k])}</pre></details>`:k==='system_errors'&&r[k]?`<span class=\"copy\" title=\"Click to copy\" onclick=\"navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(r[k])})\">${esc(r[k])}</span>`:esc(r[k])}</td>`).join('')}</tr>`).join('')}document.querySelectorAll('#grid th').forEach(th=>th.onclick=()=>{let k=th.dataset.key;if(sortKey===k)asc=!asc;else{sortKey=k;asc=true}render()})}document.getElementById('search').oninput=render;document.getElementById('status').onchange=render;document.getElementById('group').onchange=render;document.getElementById('compact').onclick=()=>{compact=!compact;document.body.classList.toggle('compact',compact);render()};render();</script></body></html>"
-        "<script>(function(){const keys=Object.keys(DATA[0]||{}).filter(k=>k!=='__group'),row=document.getElementById('column-filters');keys.forEach(k=>{const cell=document.createElement('th');if(k==='status'){cell.innerHTML='<select data-column-filter=\"status\" multiple size=\"1\" title=\"Status column filter\"><option>scheduled</option><option>running</option><option>done</option><option>error</option><option>warning</option></select>'}else{cell.innerHTML='<input data-column-filter=\"'+esc(k)+'\" placeholder=\"Filter…\" title=\"Filter '+esc(k)+'\">'}row.appendChild(cell)});function filtered(){const filters={};document.querySelectorAll('[data-column-filter]').forEach(el=>{filters[el.dataset.columnFilter]=el.multiple?[...el.selectedOptions].map(o=>o.value.toLowerCase()):el.value.toLowerCase()});return DATA.filter(r=>Object.entries(filters).every(([k,f])=>Array.isArray(f)?(!f.length||f.includes(String(val(r,k)).toLowerCase())):( !f||String(val(r,k)).toLowerCase().includes(f))));}function wire(){document.querySelectorAll('[data-column-filter]').forEach(el=>el.oninput=el.onchange=renderWithFilters);document.querySelectorAll('#grid th[data-key]').forEach(th=>th.onclick=()=>{let k=th.dataset.key;if(sortKey===k)asc=!asc;else{sortKey=k;asc=true}renderWithFilters()});document.getElementById('search').oninput=renderWithFilters;document.getElementById('status').onchange=renderWithFilters;document.getElementById('group').onchange=renderWithFilters;document.getElementById('compact').onclick=()=>{compact=!compact;document.body.classList.toggle('compact',compact);renderWithFilters()}}function renderWithFilters(){const original=DATA.slice(),q=document.getElementById('search').value.toLowerCase(),selected=filtered().filter(r=>!q||Object.values(r).some(v=>String(v).toLowerCase().includes(q)));DATA.splice(0,DATA.length,...selected);render();DATA.splice(0,DATA.length,...original);wire()}wire();renderWithFilters();})();</script></body></html>"
+        "<div class=\"toolbar\"><input id=\"search\" placeholder=\"Filter all columns…\"><select id=\"status\" multiple size=\"1\" title=\"Status filter (Ctrl-click for multiple)\"><option value=\"__all__\" selected>All</option><option value=\"scheduled\">scheduled</option><option value=\"running\">running</option><option value=\"done\">done</option><option value=\"error\">error</option><option value=\"warning\">warning</option></select><select id=\"group\" multiple size=\"1\" title=\"Multi-column grouping (Ctrl-click for multiple)\"><option value=\"__all__\" selected>All</option><option value=\"benchmark\">Benchmark</option><option value=\"provider\">Provider</option><option value=\"backend\">Backend</option><option value=\"model\">Model</option></select><button id=\"compact\">Compact/autofit</button></div>",
+        "<div id=\"grid\"></div>",
+        "<script src=\"" + html.escape(tabulator_rel) + "/tabulator.min.js\"></script>",
+        "<script>const DATA=" + grid_data + ";const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));const statusFormatter=cell=>{const v=String(cell.getValue()??'');return '<span class=\"status status-'+esc(v)+'\">'+esc(v)+'</span>'};const paramsFormatter=cell=>{const d=document.createElement('details');const s=document.createElement('summary');s.textContent='show';const p=document.createElement('pre');p.className='params';p.textContent=String(cell.getValue()??'');d.append(s,p);return d};const errorFormatter=cell=>{const v=String(cell.getValue()??'');if(!v)return '';const span=document.createElement('span');span.className='copy';span.title='Click to copy';span.textContent=v;span.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(v);return span};const columns=[{title:'Benchmark name',field:'benchmark',headerFilter:true},{title:'Status',field:'status',formatter:statusFormatter,headerFilter:'list',headerFilterParams:{valuesLookup:true,multiselect:true,clearable:true}},{title:'Provider',field:'provider',headerFilter:true},{title:'Backend',field:'backend',headerFilter:true},{title:'Model',field:'model',headerFilter:true},{title:'Run',field:'run',headerFilter:true},{title:'Date/time — run started',field:'datetime_run_started',headerFilter:true},{title:'Last update',field:'last_update',headerFilter:true},{title:'Elapsed',field:'elapsed',headerFilter:true},{title:'Wall seconds',field:'wall_seconds',headerFilter:true},{title:'Samples',field:'samples',headerFilter:true},{title:'Tok/s',field:'tok_s',headerFilter:true},{title:'CPU%',field:'cpu_percent',headerFilter:true},{title:'GPU%',field:'gpu_percent',headerFilter:true},{title:'VRAM used GB',field:'vram_used_gb',headerFilter:true},{title:'VRAM free GB',field:'vram_free_gb',headerFilter:true},{title:'RAM GB',field:'ram_gb',headerFilter:true},{title:'System errors / error text',field:'system_errors',formatter:errorFormatter,headerFilter:true},{title:'Heuristic score',field:'heuristic_score',headerFilter:true},{title:'Quality score',field:'quality_score',headerFilter:true},{title:'Rating score',field:'rating_score',headerFilter:true},{title:'Rating',field:'rating',headerFilter:true},{title:'Launch params JSON',field:'launch_params',formatter:paramsFormatter,headerFilter:true},{title:'Interpretation',field:'interpretation',headerFilter:true}];const table=new Tabulator('#grid',{data:DATA,layout:'fitDataStretch',movableColumns:true,columnDefaults:{headerFilter:true,headerSort:true},columns:columns,selectableRows:false,groupStartOpen:true,pagination:false,height:'calc(100vh - 220px)',virtualDom:true});const applyToolbar=()=>{const q=document.getElementById('search').value.toLowerCase(),ss=[...document.getElementById('status').selectedOptions].map(o=>o.value).filter(v=>v!=='__all__'),filters=[];if(q)filters.push(d=>Object.values(d).some(v=>String(v??'').toLowerCase().includes(q)));if(ss.length)filters.push(d=>ss.includes(String(d.status).toLowerCase()));table.setFilter(filters);const groups=[...document.getElementById('group').selectedOptions].map(o=>o.value).filter(v=>v!=='__all__');table.setGroupBy(groups.length?groups:false)};document.getElementById('search').oninput=applyToolbar;document.getElementById('status').onchange=applyToolbar;document.getElementById('group').onchange=applyToolbar;document.getElementById('compact').onclick=()=>{document.body.classList.toggle('compact');table.redraw(true)};applyToolbar();</script></body></html>"
     ]
     with open(report_html_path, "w", encoding="utf-8") as fhtml:
         fhtml.write("".join(html_lines))

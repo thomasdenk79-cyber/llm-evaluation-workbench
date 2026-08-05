@@ -1,0 +1,1 @@
+Tabulator Tables 6.3.1; MIT License. Source: https://github.com/olifolkerd/tabulator

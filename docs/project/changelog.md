@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-08-05 — TUI control center, embedded web control plane, wildcard campaign matrix, VRAM-free fix
+
+- **Textual TUI** (`scripts/llm_bench_tui.py`, new): running `run_benchmark.py`
+  with no arguments in an interactive terminal now opens a mouse-clickable
+  Dashboard/Config/Models & backends/Results/Leaderboard control center
+  instead of the old Tkinter dialog, reusing the existing pause/stop/resume
+  file protocol and reading the same embedded grid JSON the HTML report
+  renders (so the two views cannot drift). Non-interactive/scripted
+  invocations are unaffected. Added `textual>=0.60` to `requirements.txt`.
+- **Embedded web control plane** (`scripts/bench_web_server.py`, new): a
+  stdlib `http.server` mini web server serving the Tabulator report, a
+  compressed JSON API (`none`/`gzip`/`br`/`zstd`, negotiated via
+  `?compression=` or `Accept-Encoding`, mirroring the `taskvision-grid-lab`
+  pattern), `/api/status`, and `POST /api/control/{pause,resume,stop}`
+  reusing the existing control-file protocol.
+- **Wildcard campaign matrix** (`scripts/run_benchmark.py`): new `[[matrix]]`
+  TOML table lets a campaign expand `models`/`benchmarks`/`backend` fnmatch
+  patterns into concrete run groups (e.g. `models=["qwen*"]`,
+  `benchmarks=["*hard*"]`, `backend="ollama"`). New `--show-matrix` flag
+  prints the expanded dry-run plan without executing anything; a new
+  `_main_locked_matrix()` execution path drives the actual run when a
+  campaign config defines `[[matrix]]`, otherwise the legacy `suites`-based
+  planning is unchanged. Wildcard model resolution against an unreachable
+  Ollama endpoint now degrades to a skipped group with a warning instead of
+  crashing the whole run.
+- **Fixed: "VRAM free" column always showed `n/a`.** Root cause: the
+  `vram_free_gb` field was declared on `BenchResult` but never assigned
+  anywhere in the sampler/runner. Added a cached `gpu_total_vram_mb()`
+  helper (`nvidia-smi --query-gpu=memory.total`, static hardware value,
+  queried once per process) and derived `vram_free_gb = total_vram_gb -
+  avg_vram_used_gb` in the report's `grid_rows()` — nvidia-smi's
+  `memory.used` already reflects system-wide GPU memory use, so this is an
+  accurate "free during this run" reading, not an approximation. A manual
+  `vram_free_gb` CSV value still wins if one is ever supplied.
+- Regenerated `benchmark_report.html/.md`, `benchmark_live_status.html/.md`,
+  `benchmark_report_details.html/.md`, `benchmark_models_overview.svg`, and
+  `benchmark_run_summary.csv` from the real 71-row production CSV
+  (`benchmark_results/clean-local-campaign/complete-report-source/`) to
+  pick up this session's full Tabulator grid rewrite (readable numeric
+  fields, 6-tier violet→green color scale, 10 CSS themes, drag-and-drop
+  multi-column grouping, truncated params preview + tooltip, no
+  `quality_score`, no baked-in name suffix) together with the VRAM-free
+  fix. Schema/CSV columns unchanged (`benchmark-v2.2`); only report-side
+  rendering and derived display fields changed.
+- New docs: `docs/project/requirements.md` (binding requirements for the
+  TUI/web/LLM-management feature set) and
+  `docs/project/tui-web-architecture.md` (concept/architecture, phased
+  "Implemented" vs. prioritized backlog: parameter catalog, VRAM-headroom
+  auto-reconfig, HTML-side Top-5/scatter chart, backup/restore automation).
+
 ## 2026-08-05 — Unified run-level report contract
 
 - Replaced the duplicated current/history presentation with one offline,

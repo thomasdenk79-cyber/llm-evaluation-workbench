@@ -525,6 +525,40 @@ def stamp_launch_metadata(
     return result
 
 
+_GPU_TOTAL_VRAM_MB_CACHE: Optional[float] = None
+_GPU_TOTAL_VRAM_MB_QUERIED = False
+
+
+def gpu_total_vram_mb() -> Optional[float]:
+    """Total VRAM (MB) of the primary GPU, via `nvidia-smi --query-gpu=memory.total`.
+
+    Cached for the lifetime of the process: total VRAM capacity is static
+    hardware, so there is no need to re-invoke nvidia-smi on every call
+    (this is queried once per report generation / benchmark run at most).
+    Returns None when nvidia-smi is unavailable (no NVIDIA GPU, or the
+    driver/tool isn't installed) so callers can fall back to "n/a" display.
+    """
+    global _GPU_TOTAL_VRAM_MB_CACHE, _GPU_TOTAL_VRAM_MB_QUERIED
+    if _GPU_TOTAL_VRAM_MB_QUERIED:
+        return _GPU_TOTAL_VRAM_MB_CACHE
+    _GPU_TOTAL_VRAM_MB_QUERIED = True
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if r.returncode == 0:
+            totals = [float(ln.strip()) for ln in r.stdout.splitlines() if ln.strip()]
+            if totals:
+                _GPU_TOTAL_VRAM_MB_CACHE = sum(totals)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        _GPU_TOTAL_VRAM_MB_CACHE = None
+    return _GPU_TOTAL_VRAM_MB_CACHE
+
+
 class SystemMonitor:
     def __init__(
         self,
@@ -4002,6 +4036,46 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             return "fast screening runner; coding quality weak"
         return "good coding signal" if quality >= 70 else "coding quality weak"
 
+    def grid_interpretation(quality: float, normalized_performance: float, reliability: float, error: str, role: str) -> str:
+        # Longer, numbers-backed sentence for the rightmost "Interpretation" column;
+        # kept deliberately distinct from the short "rating" tag so the two columns
+        # never show identical text.
+        if error:
+            short_error = error[:80] + ("…" if len(error) > 80 else "")
+            return f"System error during the run ({short_error}) — treat as not usable until re-tested."
+        return (
+            f"Quality {quality:.0f}%, relative speed at the {normalized_performance * 100:.0f}th percentile "
+            f"of this comparison, reliability {reliability * 100:.0f}% — {role}."
+        )
+
+    def _tier_of(value: Optional[float], lo: Optional[float], hi: Optional[float], invert: bool = False) -> int:
+        # 6-bucket color-scale tier for rating/quality/speed columns:
+        # 1=violet (very bad) .. 6=green (very good); 0=no data / not comparable.
+        if value is None or lo is None or hi is None or hi <= lo:
+            return 0
+        frac = max(0.0, min(1.0, (value - lo) / (hi - lo)))
+        if invert:
+            frac = 1.0 - frac
+        if frac < 0.10:
+            return 1
+        if frac < 0.30:
+            return 2
+        if frac < 0.50:
+            return 3
+        if frac < 0.70:
+            return 4
+        if frac < 0.90:
+            return 5
+        return 6
+
+    def _apply_tiers(rows: List[Dict[str, Any]], field: str, invert: bool = False) -> None:
+        values = [r[field] for r in rows if isinstance(r.get(field), (int, float))]
+        lo = min(values) if values else None
+        hi = max(values) if values else None
+        for r in rows:
+            v = r.get(field)
+            r[f"{field}_tier"] = _tier_of(v if isinstance(v, (int, float)) else None, lo, hi, invert=invert)
+
     def grid_rows():
         result = []
         raw_keys = {(r.get("backend", ""), r.get("model", "")) for r in all_rows}
@@ -4030,44 +4104,274 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             runs = to_int(raw.get("benchmark_runs", "")) if raw else None
             task_count = task_count or (len(BENCH_TASKS) if planned else 1)
             runs = runs or (int(run_count_default or 1) if planned else 1)
+            # benchmark is the plain fixture display name only; task/run counts are
+            # separate sortable/filterable columns instead of being baked into the text.
             benchmark = str(raw.get("benchmark_name", "") if raw else source.get("benchmark", ""))
             started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
             updated = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
             elapsed = str(raw.get("elapsed", "")) if raw and raw.get("elapsed") else (fmt_eta(wall) if wall is not None else str(source.get("elapsed", "")))
+            run_index = to_int(raw.get("run", "")) if raw else None
+            tok_s = to_float(raw.get("output_tps", "")) if raw else to_float(source.get("tps"))
+            cpu_pct = to_float(raw.get("avg_cpu_pct", "")) if raw else to_float(source.get("avg_cpu"))
+            gpu_pct = to_float(raw.get("avg_gpu_pct", "")) if raw else to_float(source.get("avg_gpu"))
+            vram_used = (to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (to_float(source.get("used_vram_gb")) if planned else None)
+            # "vram_free_gb" is never written to the CSV by the sampler (it only
+            # records what it used, not the card's total capacity), so a raw
+            # lookup is always empty. Derive it instead: nvidia-smi's
+            # memory.used query already reflects *system-wide* GPU memory use
+            # (not just this process), so total - used is an accurate reading
+            # of what was actually free while this run executed. Falls back to
+            # a manual "vram_free_gb" CSV override if one is ever supplied.
+            vram_free_override = to_float(raw.get("vram_free_gb", "")) if raw else None
+            if vram_free_override is not None:
+                vram_free = vram_free_override
+            elif vram_used is not None:
+                total_vram_mb = gpu_total_vram_mb()
+                vram_free = max(0.0, total_vram_mb / 1024.0 - vram_used) if total_vram_mb else None
+            else:
+                vram_free = None
+            ram_used = (to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (to_float(source.get("used_ram_gb")) if planned else None)
             result.append({
-                "benchmark": f"{benchmark} — {task_count} task × {runs} runs",
+                "benchmark": benchmark,
                 "status": status, "provider": grid_provider(backend, raw), "backend": backend, "model": model,
-                "run": raw.get("run", "") if raw else "", "datetime_run_started": fmt_clock_or_date(started, report_day),
+                "run": run_index, "runs": runs, "samples": task_count,
+                "datetime_run_started": fmt_clock_or_date(started, report_day),
                 "last_update": fmt_clock_or_date(updated, report_day), "elapsed": elapsed, "wall_seconds": wall,
-                "samples": f"{raw.get('run', '')}/{runs}" if raw else str(source.get("progress", "0/?")),
-                "tok_s": raw.get("output_tps") if raw else source.get("tps"),
-                "cpu_percent": raw.get("avg_cpu_pct") if raw else source.get("avg_cpu"),
-                "gpu_percent": raw.get("avg_gpu_pct") if raw else source.get("avg_gpu"),
-                "vram_used_gb": (to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (source.get("used_vram_gb") if planned else ""),
-                "vram_free_gb": raw.get("vram_free_gb", "") if raw else "",
-                "ram_gb": (to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (source.get("used_ram_gb") if planned else ""),
-                "system_errors": error, "heuristic_score": quality, "quality_score": "N/A (same as heuristic score)",
-                "rating_score": quality * normalized * reliability, "rating": role, "launch_params": raw.get("launch_params", "") if raw else source.get("launch_params", ""), "interpretation": role,
+                "tok_s": tok_s, "cpu_percent": cpu_pct, "gpu_percent": gpu_pct,
+                "vram_used_gb": vram_used, "vram_free_gb": vram_free, "ram_gb": ram_used,
+                "system_errors": error, "heuristic_score": quality,
+                "rating_score": quality * normalized * reliability, "rating": role,
+                "launch_params": raw.get("launch_params", "") if raw else source.get("launch_params", ""),
+                "interpretation": grid_interpretation(quality, normalized, reliability, error, role),
             })
+        _apply_tiers(result, "heuristic_score", invert=False)
+        _apply_tiers(result, "rating_score", invert=False)
+        _apply_tiers(result, "wall_seconds", invert=True)
         return result
     grid_data = json.dumps(grid_rows(), ensure_ascii=False).replace("</", "<\\/")
     eta_text = fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else "n/a"
-    html_lines = [
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-        "<title>Benchmark report</title>",
-        f"<link rel=\"stylesheet\" href=\"{html.escape(tabulator_rel)}/tabulator.min.css\">",
-        "<style>:root{color-scheme:dark;--bg:#08111f;--panel:#10213a;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9}*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.4 Segoe UI,Arial,sans-serif}header{padding:20px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#17385b,var(--panel))}h1{margin:0 0 5px;font-size:25px}.muted{color:var(--muted)}.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.kpi{padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#162d4a;color:var(--text)}#grid{height:calc(100vh - 220px);min-height:420px}.tabulator{background:var(--panel);border:1px solid var(--line)}.tabulator .tabulator-header{background:#1d4166;color:var(--text)}.tabulator .tabulator-row{background:var(--panel);color:var(--text)}.tabulator .tabulator-row:nth-child(even){background:#122941}.tabulator .tabulator-row:hover{background:#143b5e}.tabulator .tabulator-cell{white-space:normal}.status{font-weight:700;text-transform:uppercase}.status-done{color:#6ee7b7}.status-error,.status-warning{color:#fda4af}.status-running{color:#7dd3fc}.status-scheduled{color:#cbd5e1}.params{max-width:340px;white-space:pre-wrap;word-break:break-word}.copy{cursor:pointer;text-decoration:underline dotted}.compact .tabulator-cell,.compact .tabulator-col{padding:3px 5px;font-size:12px}</style></head><body>",
-        "<header><h1>Benchmark series status</h1><div class=\"muted\">One offline Tabulator grid for current and completed runs · generated " + html.escape(generated) + "</div></header>",
-        f"<section class=\"kpis\"><div class=\"kpi\"><b>Progress</b><br>{html.escape(progress_display)}</div><div class=\"kpi\"><b>Calculated ETA / remaining</b><br>{html.escape(eta_text)}</div></section>",
-        "<div class=\"toolbar\"><input id=\"search\" placeholder=\"Filter all columns…\"><select id=\"status\" multiple size=\"1\" title=\"Status filter (Ctrl-click for multiple)\"><option value=\"__all__\" selected>All</option><option value=\"scheduled\">scheduled</option><option value=\"running\">running</option><option value=\"done\">done</option><option value=\"error\">error</option><option value=\"warning\">warning</option></select><select id=\"group\" multiple size=\"1\" title=\"Multi-column grouping (Ctrl-click for multiple)\"><option value=\"__all__\" selected>All</option><option value=\"benchmark\">Benchmark</option><option value=\"provider\">Provider</option><option value=\"backend\">Backend</option><option value=\"model\">Model</option></select><button id=\"compact\">Compact/autofit</button></div>",
-        "<div id=\"grid\"></div>",
-        "<script src=\"" + html.escape(tabulator_rel) + "/tabulator.min.js\"></script>",
-        "<script>const DATA=" + grid_data + ";const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));const statusFormatter=cell=>{const v=String(cell.getValue()??'');return '<span class=\"status status-'+esc(v)+'\">'+esc(v)+'</span>'};const paramsFormatter=cell=>{const d=document.createElement('details');const s=document.createElement('summary');s.textContent='show';const p=document.createElement('pre');p.className='params';p.textContent=String(cell.getValue()??'');d.append(s,p);return d};const errorFormatter=cell=>{const v=String(cell.getValue()??'');if(!v)return '';const span=document.createElement('span');span.className='copy';span.title='Click to copy';span.textContent=v;span.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(v);return span};const columns=[{title:'Benchmark name',field:'benchmark',headerFilter:true},{title:'Status',field:'status',formatter:statusFormatter,headerFilter:'list',headerFilterParams:{valuesLookup:true,multiselect:true,clearable:true}},{title:'Provider',field:'provider',headerFilter:true},{title:'Backend',field:'backend',headerFilter:true},{title:'Model',field:'model',headerFilter:true},{title:'Run',field:'run',headerFilter:true},{title:'Date/time — run started',field:'datetime_run_started',headerFilter:true},{title:'Last update',field:'last_update',headerFilter:true},{title:'Elapsed',field:'elapsed',headerFilter:true},{title:'Wall seconds',field:'wall_seconds',headerFilter:true},{title:'Samples',field:'samples',headerFilter:true},{title:'Tok/s',field:'tok_s',headerFilter:true},{title:'CPU%',field:'cpu_percent',headerFilter:true},{title:'GPU%',field:'gpu_percent',headerFilter:true},{title:'VRAM used GB',field:'vram_used_gb',headerFilter:true},{title:'VRAM free GB',field:'vram_free_gb',headerFilter:true},{title:'RAM GB',field:'ram_gb',headerFilter:true},{title:'System errors / error text',field:'system_errors',formatter:errorFormatter,headerFilter:true},{title:'Heuristic score',field:'heuristic_score',headerFilter:true},{title:'Quality score',field:'quality_score',headerFilter:true},{title:'Rating score',field:'rating_score',headerFilter:true},{title:'Rating',field:'rating',headerFilter:true},{title:'Launch params JSON',field:'launch_params',formatter:paramsFormatter,headerFilter:true},{title:'Interpretation',field:'interpretation',headerFilter:true}];const table=new Tabulator('#grid',{data:DATA,layout:'fitDataStretch',movableColumns:true,columnDefaults:{headerFilter:true,headerSort:true},columns:columns,selectableRows:false,groupStartOpen:true,pagination:false,height:'calc(100vh - 220px)',virtualDom:true});const applyToolbar=()=>{const q=document.getElementById('search').value.toLowerCase(),ss=[...document.getElementById('status').selectedOptions].map(o=>o.value).filter(v=>v!=='__all__'),filters=[];if(q)filters.push(d=>Object.values(d).some(v=>String(v??'').toLowerCase().includes(q)));if(ss.length)filters.push(d=>ss.includes(String(d.status).toLowerCase()));table.setFilter(filters);const groups=[...document.getElementById('group').selectedOptions].map(o=>o.value).filter(v=>v!=='__all__');table.setGroupBy(groups.length?groups:false)};document.getElementById('search').oninput=applyToolbar;document.getElementById('status').onchange=applyToolbar;document.getElementById('group').onchange=applyToolbar;document.getElementById('compact').onclick=()=>{document.body.classList.toggle('compact');table.redraw(true)};applyToolbar();</script></body></html>"
-    ]
+
+    # Column field -> readable title, used both for the Tabulator column defs and
+    # for labelling drag-to-group chips/tooltips in the toolbar JS below.
+    grid_css = """
+:root,body{color-scheme:dark;--bg:#08111f;--panel:#10213a;--panel-alt:#122941;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9;--accent:#3b82f6;--header-bg:#152a46;--header-text:#f4f8ff}
+body[data-theme="midnight"]{--bg:#08111f;--panel:#10213a;--panel-alt:#122941;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9;--accent:#3b82f6;--header-bg:#152a46;--header-text:#f4f8ff}
+body[data-theme="slate"]{--bg:#0f1115;--panel:#1a1d24;--panel-alt:#20242c;--line:#343a45;--text:#e7e9ee;--muted:#9aa1ad;--accent:#60a5fa;--header-bg:#20242c;--header-text:#ffffff}
+body[data-theme="dracula"]{--bg:#282a36;--panel:#2f313f;--panel-alt:#363849;--line:#44475a;--text:#f8f8f2;--muted:#bd93f9;--accent:#ff79c6;--header-bg:#363849;--header-text:#f8f8f2}
+body[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--panel-alt:#434c5e;--line:#4c566a;--text:#eceff4;--muted:#9fb3c8;--accent:#88c0d0;--header-bg:#434c5e;--header-text:#eceff4}
+body[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--panel-alt:#0a4453;--line:#155263;--text:#eee8d5;--muted:#93a1a1;--accent:#268bd2;--header-bg:#0a4453;--header-text:#fdf6e3}
+body[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--panel-alt:#fbf4e0;--line:#d6cfb4;--text:#073642;--muted:#657b83;--accent:#268bd2;--header-bg:#eee8d5;--header-text:#073642}
+body[data-theme="light"]{--bg:#f4f6fa;--panel:#ffffff;--panel-alt:#f0f3f8;--line:#d6dce6;--text:#12213a;--muted:#5c6b85;--accent:#2563eb;--header-bg:#e7edf7;--header-text:#12213a}
+body[data-theme="paper"]{--bg:#f7f3ea;--panel:#fffdf8;--panel-alt:#f1ebdd;--line:#e0d6bd;--text:#2c2417;--muted:#7a6d54;--accent:#a1662f;--header-bg:#efe4cd;--header-text:#2c2417}
+body[data-theme="terminal"]{--bg:#000000;--panel:#0a0f0a;--panel-alt:#0e150e;--line:#1f3b1f;--text:#39ff6a;--muted:#1f9d47;--accent:#39ff6a;--header-bg:#0a0f0a;--header-text:#39ff6a}
+body[data-theme="high-contrast"]{--bg:#000000;--panel:#0d0d0d;--panel-alt:#161616;--line:#ffee00;--text:#ffffff;--muted:#ffee00;--accent:#ffee00;--header-bg:#000000;--header-text:#ffee00}
+*{box-sizing:border-box}
+body{margin:0;padding:22px;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",Arial,sans-serif;transition:background .2s,color .2s}
+body[data-theme="terminal"]{font-family:Consolas,"Cascadia Mono",monospace}
+header{padding:18px 22px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--panel)),var(--panel))}
+h1{margin:0 0 4px;font-size:23px;letter-spacing:.2px}
+.muted{color:var(--muted)}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+.kpi{padding:9px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:150px}
+.kpi b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:2px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 8px}
+.toolbar input,.toolbar select,.toolbar button{padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel-alt);color:var(--text);font-size:12.5px}
+.toolbar button{cursor:pointer;transition:background .15s,transform .05s}
+.toolbar button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
+.toolbar button:active{transform:translateY(1px)}
+.toolbar input{min-width:220px}
+#groupbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:var(--panel-alt);min-height:38px;transition:background .15s,border-color .15s}
+#groupbar.dragover{background:color-mix(in srgb,var(--accent) 22%,var(--panel-alt));border-color:var(--accent)}
+#groupbar .hint{color:var(--muted);font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px 4px 10px;border-radius:999px;background:var(--accent);color:#fff;font-size:12px;cursor:grab;user-select:none}
+.chip .x{cursor:pointer;opacity:.85;font-weight:700}
+.chip .x:hover{opacity:1}
+.chip.dragging{opacity:.4}
+#grid{height:calc(100vh - 250px);min-height:420px}
+.tabulator{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px}
+.tabulator .tabulator-header{background:var(--header-bg);color:var(--header-text);border-bottom:2px solid var(--accent)}
+.tabulator .tabulator-col{background:var(--header-bg)}
+.tabulator .tabulator-col-title{color:var(--header-text);font-weight:700;font-size:12px;letter-spacing:.02em}
+.tabulator .tabulator-col-title[draggable="true"]{cursor:grab}
+.tabulator .tabulator-col.dragging-source{opacity:.5}
+.tabulator .tabulator-header-filter input,.tabulator .tabulator-header-filter select{width:100%;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font-size:11.5px}
+.tabulator .tabulator-header-filter input:focus,.tabulator .tabulator-header-filter select:focus{outline:2px solid var(--accent);outline-offset:1px}
+.tabulator .tabulator-row{background:var(--panel);color:var(--text);border-bottom:1px solid var(--line)}
+.tabulator .tabulator-row.tabulator-row-even{background:var(--panel-alt)}
+.tabulator .tabulator-row:hover{background:color-mix(in srgb,var(--accent) 14%,var(--panel))}
+.tabulator .tabulator-row .tabulator-cell{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;transition:background .1s}
+.tabulator .tabulator-row .tabulator-cell:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent)}
+.tabulator-row.tabulator-group{background:var(--header-bg);color:var(--header-text);font-weight:700}
+.tabulator-row.tabulator-group:hover{background:color-mix(in srgb,var(--accent) 25%,var(--header-bg))}
+.status{display:inline-block;padding:2px 9px;border-radius:999px;font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:#fff}
+.status-done{background:#16a34a}
+.status-error{background:#dc2626}
+.status-warning{background:#d97706}
+.status-scheduled{background:#64748b}
+.status-running{background:#2563eb}
+.tier-0{color:var(--muted)}
+.tier-1{color:#8b5cf6;font-weight:700}
+.tier-2{color:#ef4444;font-weight:700}
+.tier-3{color:#f97316;font-weight:700}
+.tier-4{color:#ca8a04;font-weight:700}
+.tier-5{color:#3b82f6;font-weight:700}
+.tier-6{color:#16a34a;font-weight:700}
+body[data-theme="light"] .tier-4,body[data-theme="paper"] .tier-4,body[data-theme="solarized-light"] .tier-4{color:#92660a}
+.params-preview{font-family:Consolas,monospace;font-size:11px;color:var(--muted);cursor:help;border-bottom:1px dotted var(--muted)}
+.copy{cursor:pointer;text-decoration:underline dotted;transition:color .1s}
+.copy:hover{color:var(--accent)}
+.compact .tabulator-cell,.compact .tabulator-col{padding:2px 6px;font-size:11px}
+.compact .tabulator-col-title{font-size:10.5px}
+.tabulator-tooltip{max-width:520px;white-space:pre-wrap;word-break:break-word;font-family:Consolas,monospace;font-size:11.5px;background:var(--panel-alt)!important;color:var(--text)!important;border:1px solid var(--accent)!important;border-radius:8px!important;padding:8px 10px!important;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+kbd{background:var(--panel-alt);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+"""
+
+    grid_js = """
+const DATA=__GRID_DATA__;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const numFmt=(v,d,suf)=>{if(v===null||v===undefined||v==='')return 'N/A';const n=Number(v);if(Number.isNaN(n))return 'N/A';return n.toFixed(d)+(suf||'');};
+const FIELD_TITLES={benchmark:'Benchmark',status:'Status',provider:'Provider',backend:'Backend',model:'Model',run:'Run',runs:'Runs',samples:'Tasks/run',datetime_run_started:'Started',last_update:'Updated',elapsed:'Elapsed',tok_s:'Tok/s',cpu_percent:'CPU',gpu_percent:'GPU',vram_used_gb:'VRAM used',vram_free_gb:'VRAM free',ram_gb:'RAM',system_errors:'Errors',heuristic_score:'Heuristic',rating_score:'Score',rating:'Suitability',launch_params:'Params',interpretation:'Interpretation'};
+const statusFormatter=cell=>{const v=String(cell.getValue()??'');return '<span class="status status-'+esc(v)+'">'+esc(v)+'</span>';};
+const tierFormatter=(field,decimals,suffix)=>cell=>{const d=cell.getData();const tier=d[field+'_tier']??0;const v=numFmt(cell.getValue(),decimals,suffix);return '<span class="tier-'+tier+'">'+esc(v)+'</span>';};
+const pctFormatter=cell=>numFmt(cell.getValue(),1,'%');
+const gbFormatter=cell=>numFmt(cell.getValue(),2,' GB');
+const tokFormatter=cell=>numFmt(cell.getValue(),1,' tok/s');
+const paramsFormatter=cell=>{const raw=String(cell.getValue()??'');if(!raw)return '<span class="muted">—</span>';let preview=raw.replace(/\\s+/g,' ').trim();if(preview.length>54)preview=preview.slice(0,54)+'…';return '<span class="params-preview">'+esc(preview)+'</span>';};
+const paramsTooltip=(e,cell)=>{const raw=String(cell.getValue()??'');if(!raw)return false;try{return JSON.stringify(JSON.parse(raw),null,2);}catch(err){return raw;}};
+const errorFormatter=cell=>{const v=String(cell.getValue()??'');if(!v)return '';const span=document.createElement('span');span.className='copy';span.title='Click to copy';span.textContent=v.length>60?v.slice(0,60)+'…':v;span.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(v);return span;};
+const columns=[
+ {title:'Benchmark',field:'benchmark',headerFilter:'input',minWidth:200},
+ {title:'Status',field:'status',formatter:statusFormatter,headerFilter:'list',headerFilterParams:{valuesLookup:true,multiselect:true,clearable:true},hozAlign:'center',width:120},
+ {title:'Provider',field:'provider',headerFilter:'input',width:110},
+ {title:'Backend',field:'backend',headerFilter:'input',width:100},
+ {title:'Model',field:'model',headerFilter:'input',minWidth:170},
+ {title:'Run',field:'run',headerFilter:'input',hozAlign:'center',width:64},
+ {title:'Runs',field:'runs',headerFilter:'input',hozAlign:'center',width:64},
+ {title:'Tasks/run',field:'samples',headerFilter:'input',hozAlign:'center',width:84},
+ {title:'Started',field:'datetime_run_started',headerFilter:'input',width:110},
+ {title:'Updated',field:'last_update',headerFilter:'input',width:110},
+ {title:'Elapsed',field:'elapsed',formatter:cell=>{const d=cell.getData();const tier=d.wall_seconds_tier??0;return '<span class="tier-'+tier+'">'+esc(cell.getValue()??'')+'</span>';},headerFilter:'input',hozAlign:'right',width:90},
+ {title:'Tok/s',field:'tok_s',formatter:tokFormatter,headerFilter:'input',hozAlign:'right',width:90},
+ {title:'CPU',field:'cpu_percent',formatter:pctFormatter,headerFilter:'input',hozAlign:'right',width:80},
+ {title:'GPU',field:'gpu_percent',formatter:pctFormatter,headerFilter:'input',hozAlign:'right',width:80},
+ {title:'VRAM used',field:'vram_used_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:100},
+ {title:'VRAM free',field:'vram_free_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:100},
+ {title:'RAM',field:'ram_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:90},
+ {title:'Errors',field:'system_errors',formatter:errorFormatter,headerFilter:'input',minWidth:140},
+ {title:'Heuristic',field:'heuristic_score',formatter:tierFormatter('heuristic_score',1,'%'),headerFilter:'input',hozAlign:'right',width:100},
+ {title:'Score',field:'rating_score',formatter:tierFormatter('rating_score',1,''),headerFilter:'input',hozAlign:'right',width:90},
+ {title:'Suitability',field:'rating',headerFilter:'input',minWidth:170},
+ {title:'Params',field:'launch_params',formatter:paramsFormatter,tooltip:paramsTooltip,headerFilter:'input',minWidth:150},
+ {title:'Interpretation',field:'interpretation',headerFilter:'input',minWidth:260}
+];
+const table=new Tabulator('#grid',{
+ data:DATA,layout:'fitDataTable',movableColumns:true,resizableColumnFit:true,
+ columnDefaults:{headerSort:true,headerWordWrap:true},
+ columns:columns,selectableRows:false,groupStartOpen:true,pagination:false,
+ height:'calc(100vh - 250px)',virtualDom:true,placeholder:'No rows match the current filters'
+});
+let groupFields=[];
+const groupbar=document.getElementById('groupbar');
+const renderChips=()=>{
+ groupbar.querySelectorAll('.chip').forEach(c=>c.remove());
+ const hint=groupbar.querySelector('.hint');
+ hint.style.display=groupFields.length?'none':'inline';
+ groupFields.forEach((field,idx)=>{
+  const chip=document.createElement('span');
+  chip.className='chip';chip.draggable=true;chip.dataset.field=field;chip.dataset.idx=idx;
+  chip.innerHTML=esc(FIELD_TITLES[field]||field)+' <span class="x" title="Remove">×</span>';
+  chip.querySelector('.x').onclick=()=>{groupFields=groupFields.filter(f=>f!==field);applyGroup();};
+  chip.ondragstart=ev=>{ev.dataTransfer.setData('text/chip-index',String(idx));chip.classList.add('dragging');};
+  chip.ondragend=()=>chip.classList.remove('dragging');
+  chip.ondragover=ev=>ev.preventDefault();
+  chip.ondrop=ev=>{
+   ev.preventDefault();
+   const from=ev.dataTransfer.getData('text/chip-index');
+   if(from===''){const field2=ev.dataTransfer.getData('text/field');if(field2&&!groupFields.includes(field2)){groupFields.push(field2);applyGroup();}return;}
+   const fromIdx=Number(from);
+   if(Number.isNaN(fromIdx)||fromIdx===idx)return;
+   const moved=groupFields.splice(fromIdx,1)[0];
+   groupFields.splice(idx,0,moved);
+   applyGroup();
+  };
+  groupbar.insertBefore(chip,hint);
+ });
+};
+const applyGroup=()=>{table.setGroupBy(groupFields.length?groupFields:false);renderChips();};
+groupbar.ondragover=ev=>{ev.preventDefault();groupbar.classList.add('dragover');};
+groupbar.ondragleave=()=>groupbar.classList.remove('dragover');
+groupbar.ondrop=ev=>{
+ ev.preventDefault();groupbar.classList.remove('dragover');
+ if(ev.target.closest('.chip'))return;
+ const field=ev.dataTransfer.getData('text/field');
+ if(field&&!groupFields.includes(field)){groupFields.push(field);applyGroup();}
+};
+table.on('tableBuilt',()=>{
+ table.getColumns().forEach(col=>{
+  const el=col.getElement();
+  const titleEl=el.querySelector('.tabulator-col-title');
+  if(!titleEl)return;
+  titleEl.setAttribute('draggable','true');
+  titleEl.title='Drag onto the group bar below to group by '+(FIELD_TITLES[col.getField()]||col.getField());
+  titleEl.addEventListener('dragstart',ev=>{ev.dataTransfer.setData('text/field',col.getField());el.classList.add('dragging-source');});
+  titleEl.addEventListener('dragend',()=>el.classList.remove('dragging-source'));
+ });
+ renderChips();
+});
+const applySearch=()=>{
+ const q=document.getElementById('search').value.toLowerCase();
+ if(!q){table.clearFilter();return;}
+ table.setFilter(d=>Object.values(d).some(v=>String(v??'').toLowerCase().includes(q)));
+};
+document.getElementById('search').oninput=applySearch;
+document.getElementById('theme').onchange=e=>{document.body.dataset.theme=e.target.value;};
+document.getElementById('compact').onclick=()=>{document.body.classList.toggle('compact');table.redraw(true);};
+document.getElementById('reset').onclick=()=>{
+ document.getElementById('search').value='';
+ table.clearFilter(true);
+ groupFields=[];applyGroup();
+};
+"""
+
+    html_doc = (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Benchmark report</title>"
+        f"<link rel=\"stylesheet\" href=\"{html.escape(tabulator_rel)}/tabulator.min.css\">"
+        f"<style>{grid_css}</style></head><body data-theme=\"midnight\">"
+        "<header><h1>Benchmark series status</h1>"
+        "<div class=\"muted\">One offline Tabulator grid for current and completed runs · generated "
+        + html.escape(generated) + "</div></header>"
+        f"<section class=\"kpis\"><div class=\"kpi\"><b>Progress</b>{html.escape(progress_display)}</div>"
+        f"<div class=\"kpi\"><b>Calculated ETA / remaining</b>{html.escape(eta_text)}</div></section>"
+        "<div class=\"toolbar\">"
+        "<input id=\"search\" placeholder=\"Filter all columns…\">"
+        "<select id=\"theme\" title=\"Layout / color theme\">"
+        "<option value=\"midnight\" selected>Midnight (dark)</option>"
+        "<option value=\"slate\">Slate (dark)</option>"
+        "<option value=\"dracula\">Dracula</option>"
+        "<option value=\"nord\">Nord</option>"
+        "<option value=\"solarized-dark\">Solarized dark</option>"
+        "<option value=\"solarized-light\">Solarized light</option>"
+        "<option value=\"light\">Light</option>"
+        "<option value=\"paper\">Paper</option>"
+        "<option value=\"terminal\">Terminal</option>"
+        "<option value=\"high-contrast\">High contrast</option>"
+        "</select>"
+        "<button id=\"compact\">Compact/autofit</button>"
+        "<button id=\"reset\">Reset filters &amp; grouping</button>"
+        "</div>"
+        "<div id=\"groupbar\"><span class=\"hint\">Drag a column header here to group by it (drop another to add a second/third grouping level; drag chips to reorder).</span></div>"
+        "<div id=\"grid\"></div>"
+        f"<script src=\"{html.escape(tabulator_rel)}/tabulator.min.js\"></script>"
+        f"<script>{grid_js.replace('__GRID_DATA__', grid_data)}</script>"
+        "</body></html>"
+    )
     with open(report_html_path, "w", encoding="utf-8") as fhtml:
-        fhtml.write("".join(html_lines))
+        fhtml.write(html_doc)
     with open(os.path.join(report_dir, "benchmark_live_status.html"), "w", encoding="utf-8") as flive_html:
-        flive_html.write("".join(html_lines))
+        flive_html.write(html_doc)
+
 
     detail_lines: List[str] = []
     detail_lines.append("# Benchmark Detailed Live Status")

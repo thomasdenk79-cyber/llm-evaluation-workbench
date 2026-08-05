@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-08-05 — Unified run-level report contract
+
+- Replaced the duplicated current/history presentation with one offline,
+  run-level grid containing all 71 measured rows.
+- Added per-column filters, multi-status filtering, multi-column grouping,
+  sorting, compact mode, copyable error text and expandable launch parameters.
+- Added provider, sample-count benchmark display, elapsed/wall time, VRAM free,
+  explicit heuristic/error aliases, rating score and role-oriented
+  interpretation fields to `benchmark-v2.2`.
+- Clarified that the web-grid fixture is a screening fixture, not the
+  benchmark campaign name, and removed per-row ETA-end and LLM lifecycle
+  columns.
+
 ## 2026-08-05 — Ollama inventory, medium rerun and top-seven gate
 
 - Corrected the resumable campaign URL from the Ollama base endpoint to the

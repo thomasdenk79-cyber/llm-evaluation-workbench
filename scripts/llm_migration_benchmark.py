@@ -31,7 +31,7 @@ BENCHMARK_LIBRARY_DIR = "benchmarks"
 DEFAULT_BENCHMARK_ID = "ora-pg-py-33"
 BENCHMARK_SCORING_MODE = "classic"  # classic | swe_lite
 BENCHMARK_SWE_PASS_THRESHOLD = 85.0
-CSV_SCHEMA_VERSION = "benchmark-v2.1"
+CSV_SCHEMA_VERSION = "benchmark-v2.2"
 
 DETAIL_CSV_COLUMNS = [
     "benchmark_run_id", "schema_version", "benchmark_name", "benchmark_spec_version",
@@ -47,6 +47,12 @@ DETAIL_CSV_COLUMNS = [
     "status", "run_started_at", "run_finished_at", "hardware_profile", "provenance",
     "launch_profile", "server_executable", "model_path", "launch_params",
     "rating", "agent_suitability", "output_preview", "error",
+    # Additive report-facing metadata; legacy columns above remain unchanged.
+    "provider", "benchmark_display", "datetime_run_started", "last_update",
+    "elapsed", "wall_s", "samples", "vram_free_gb", "rating_score",
+    "interpretation",
+    "heuristic_score", "error_text", "avg_vram_used_gb", "avg_mem_gb",
+    "system_errors",
 ]
 HISTORY_CSV_COLUMNS = ["source_csv"] + DETAIL_CSV_COLUMNS
 
@@ -451,6 +457,16 @@ class BenchResult:
     server_executable: str = ""
     model_path: str = ""
     launch_params: str = ""
+    provider: str = ""
+    benchmark_display: str = ""
+    datetime_run_started: str = ""
+    last_update: str = ""
+    elapsed: str = ""
+    wall_s: Optional[float] = None
+    samples: str = ""
+    vram_free_gb: Optional[float] = None
+    rating_score: Optional[float] = None
+    interpretation: str = ""
 
 
 def launch_metadata(
@@ -2361,9 +2377,6 @@ def save_results(
     def sample_id(r: BenchResult) -> str:
         return f"{r.benchmark_run_id}:{r.backend}:{r.model}:{r.case_id}:{r.run}"
 
-    def sample_rating(r: BenchResult) -> float:
-        return max(0.0, min(100.0, float(r.quality_score) if not r.error else 0.0))
-
     def sample_suitability(r: BenchResult) -> str:
         if r.error:
             return "not suitable"
@@ -2373,6 +2386,53 @@ def save_results(
             return "conditional"
         return "not suitable"
 
+    successful = [r for r in results if not (r.error or "").strip()]
+    performance_values = [
+        (float(r.output_tps) if r.output_tps and r.output_tps > 0 else 1000.0 / r.wall_ms)
+        for r in successful
+        if (r.output_tps and r.output_tps > 0) or r.wall_ms > 0
+    ]
+    perf_lo, perf_hi = (min(performance_values), max(performance_values)) if performance_values else (0.0, 1.0)
+
+    def provider_for(
+        backend: str,
+        server_executable: str = "",
+        launch_profile: str = "",
+        launch_params: str = "",
+    ) -> str:
+        backend_key = (backend or "").lower()
+        if backend_key == "siemens":
+            return "Siemens"
+        if backend_key in {"github", "copilot"}:
+            return "GitHub"
+        if backend_key == "ollama":
+            return "Ollama"
+        if backend_key == "llama_cpp":
+            provenance = " ".join((server_executable, launch_profile, launch_params)).lower()
+            return "ik" if "ik" in provenance or "ik_llama" in provenance else "upstream"
+        if backend_key == "local":
+            return "Local"
+        if backend_key.startswith("local/"):
+            return "Local/" + (backend or "").split("/", 1)[1]
+        return backend or "Local"
+
+    def elapsed_text(wall_ms: float) -> str:
+        seconds = max(int(round(wall_ms / 1000.0)), 0)
+        return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+
+    def role_class(quality: float, normalized_performance: float, reliability: float, error: str = "") -> str:
+        if error or reliability < 0.90:
+            return "unreliable for unattended use"
+        if quality >= 85.0 and normalized_performance >= 0.70:
+            return "high quality signal; architecture/reviewer candidate"
+        if quality >= 75.0 and normalized_performance < 0.50:
+            return "good coding signal; slower"
+        if quality < 60.0 and normalized_performance >= 0.70:
+            return "fast screening runner; coding quality weak"
+        if quality >= 70.0:
+            return "good coding signal"
+        return "coding quality weak"
+
     os.makedirs(output_dir, exist_ok=True)
     ts = run_tag or datetime.now().strftime("%Y%m%d_%H%M%S")
     suffix = "_inprogress" if inprogress else ""
@@ -2381,14 +2441,60 @@ def save_results(
 
     def detail_row(r: BenchResult) -> Dict[str, object]:
         row = dict(r.__dict__)
+        expected_samples = r.benchmark_task_count * r.benchmark_runs if r.benchmark_task_count and r.benchmark_runs else ""
+        performance = (
+            float(r.output_tps) if r.output_tps and r.output_tps > 0
+            else (1000.0 / r.wall_ms if r.wall_ms > 0 else 0.0)
+        )
+        normalized_performance = (
+            1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (performance - perf_lo) / (perf_hi - perf_lo)))
+        )
+        reliability = 0.0 if r.error else 1.0
+        quality = max(0.0, min(100.0, float(r.quality_score) if not r.error else 0.0))
+        benchmark_display = (
+            f"{r.benchmark_name} — {r.benchmark_task_count} task × {r.benchmark_runs} runs"
+            if r.benchmark_task_count and r.benchmark_runs
+            else r.benchmark_name
+        )
+        run_started = r.run_started_at or r.recorded_at
+        r.provider = r.provider or provider_for(r.backend, r.server_executable, r.launch_profile, r.launch_params)
+        r.benchmark_display = r.benchmark_display or benchmark_display
+        r.datetime_run_started = r.datetime_run_started or run_started
+        r.last_update = r.last_update or r.recorded_at or r.run_finished_at
+        r.elapsed = r.elapsed or elapsed_text(r.wall_ms)
+        r.wall_s = r.wall_s if r.wall_s is not None else r.wall_ms / 1000.0
+        r.samples = r.samples or (f"1/{expected_samples}" if expected_samples else "1/?")
+        r.rating_score = r.rating_score if r.rating_score is not None else quality * normalized_performance * reliability
+        interpretation = role_class(quality, normalized_performance, reliability, r.error)
+        r.interpretation = r.interpretation or interpretation
         row.update({
             "schema_version": CSV_SCHEMA_VERSION,
             "sample_id": sample_id(r),
             "sample_name": r.case_title,
-            "rating": f"{sample_rating(r):.2f}",
+            "rating": role_class(quality, normalized_performance, reliability, r.error),
             "agent_suitability": sample_suitability(r),
             "elapsed_p50_ms": "",
             "elapsed_p95_ms": "",
+            "provider": r.provider,
+            "benchmark_display": r.benchmark_display,
+            "datetime_run_started": r.datetime_run_started,
+            "last_update": r.last_update,
+            "elapsed": r.elapsed,
+            "wall_s": r.wall_s,
+            "samples": r.samples,
+            "vram_free_gb": r.vram_free_gb if r.vram_free_gb is not None else "",
+            "rating_score": r.rating_score,
+            "interpretation": r.interpretation,
+            "heuristic_score": quality,
+            "error_text": r.error or "",
+            "avg_vram_used_gb": (
+                r.avg_vram_used_mb / 1024.0 if r.avg_vram_used_mb is not None else ""
+            ),
+            "avg_mem_gb": (
+                (r.avg_mem_pct / 100.0) * (psutil.virtual_memory().total / (1024.0 ** 3))
+                if r.avg_mem_pct is not None else ""
+            ),
+            "system_errors": 1 if (r.error or "").strip() else 0,
         })
         for key in ("llm_size_bytes", "prompt_tokens", "output_tokens", "io_read", "io_write"):
             if row.get(key) is None:
@@ -2755,6 +2861,10 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         if total_expected_samples is not None
         else None
     )
+    if total_expected_samples is not None:
+        # History may contain more completed raw rows than the current plan
+        # (for example multiple campaigns); never render a misleading 71/64.
+        total_expected_samples = max(total_expected_samples, total_completed_samples)
     progress_display = (
         f"{total_completed_samples}/{total_expected_samples}"
         if total_expected_samples is not None
@@ -2762,16 +2872,21 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     )
     time_marks = [parse_ts(r.get("recorded_at", "")) for r in all_rows]
     time_marks = [t for t in time_marks if t is not None]
-    api_elapsed_seconds = sum((to_float(r.get("wall_ms", "")) or 0.0) for r in all_rows) / 1000.0
+    completed_elapsed_values = [
+        to_float(r.get("wall_ms", ""))
+        for r in all_rows
+        if not (r.get("error") or "").strip() and to_float(r.get("wall_ms", "")) is not None
+    ]
+    api_elapsed_seconds = sum(completed_elapsed_values) / 1000.0
     overall_eta_seconds: Optional[float] = None
     overall_samples_per_min: Optional[float] = None
     if total_remaining_samples == 0 and total_expected_samples is not None:
         overall_eta_seconds = 0.0
     elif total_remaining_samples is not None and api_elapsed_seconds > 0 and total_completed_samples > 0:
-        samples_per_second = total_completed_samples / api_elapsed_seconds
-        if samples_per_second > 0:
-            overall_eta_seconds = total_remaining_samples / samples_per_second
-            overall_samples_per_min = samples_per_second * 60.0
+        average_completed_seconds = api_elapsed_seconds / len(completed_elapsed_values) if completed_elapsed_values else 0.0
+        if average_completed_seconds > 0:
+            overall_eta_seconds = total_remaining_samples * average_completed_seconds
+            overall_samples_per_min = 60.0 / average_completed_seconds
     if overall_eta_seconds is None:
         per_model_etas = [r.get("eta_seconds") for r in summary_rows if isinstance(r.get("eta_seconds"), (int, float))]
         if per_model_etas:
@@ -3156,14 +3271,16 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     lines.append(f"- Total testcase runs: `{total_runs}`")
     lines.append(f"- Overall progress: `{progress_display}`")
     lines.append(f"- Overall ETA left: `{fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else 'n/a'}`")
-    lines.append(f"- Overall ETA end: `{overall_eta_end if overall_eta_end else 'n/a'}`")
     if overall_samples_per_min is not None:
         lines.append(f"- Effective throughput: `{overall_samples_per_min:.2f} samples/min`")
     benchmark_names = sorted({r.get("benchmark_name", "") for r in all_rows if r.get("benchmark_name")})
+    campaign_benchmark_name = "Clean multi-backend model screening"
+    fixture_names = [name for name in benchmark_names if name != campaign_benchmark_name]
     benchmark_versions = sorted({r.get("benchmark_spec_version", "") for r in all_rows if r.get("benchmark_spec_version")})
     benchmark_scripts = sorted({r.get("benchmark_script_file", "") for r in all_rows if r.get("benchmark_script_file")})
     benchmark_task_counts = sorted({r.get("benchmark_task_count", "") for r in all_rows if r.get("benchmark_task_count")})
-    lines.append(f"- Benchmark name(s): `{', '.join(benchmark_names) if benchmark_names else 'n/a'}`")
+    lines.append(f"- Benchmark name(s): `{campaign_benchmark_name}`")
+    lines.append(f"- Benchmark fixture(s): `{', '.join(fixture_names) if fixture_names else 'n/a'}`")
     lines.append(f"- Benchmark version(s): `{', '.join(benchmark_versions) if benchmark_versions else 'n/a'}`")
     lines.append(f"- Benchmark script(s): `{', '.join(benchmark_scripts) if benchmark_scripts else 'n/a'}`")
     lines.append(f"- Benchmark task count(s): `{', '.join(benchmark_task_counts) if benchmark_task_counts else 'n/a'}`")
@@ -3597,6 +3714,17 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         return (2, plan_epoch, 0.0, str(row.get("backend", "")), str(row.get("model", "")))
 
     model_live_rows.sort(key=live_row_sort_key)
+    raw_run_keys = {
+        (r.get("backend", ""), r.get("model", ""), r.get("case_id", ""), r.get("run", ""))
+        for r in all_rows
+    }
+    planned_missing_count = sum(
+        1
+        for r in planned_rows
+        if (str(r.get("backend", "")), str(r.get("model", "")), str(r.get("case_id", "")), str(r.get("run", "")))
+        not in raw_run_keys
+    )
+    progress_display = f"{len(all_rows)}/{len(all_rows) + planned_missing_count}"
     run_summary_rows = history_run_summary_rows or [
         row
         for row in model_live_rows
@@ -3743,6 +3871,14 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         "model_path",
         "launch_params",
         "llm_size_bytes",
+        "provider",
+        "benchmark_display",
+        "datetime_run_started",
+        "last_update",
+        "wall_s",
+        "samples",
+        "vram_free_gb",
+        "interpretation",
         "date_time",
         "backend",
         "model",
@@ -3787,6 +3923,14 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                     "model_path": row.get("model_path", ""),
                     "launch_params": row.get("launch_params", ""),
                     "llm_size_bytes": row.get("llm_size_bytes"),
+                    "provider": row.get("provider", {"siemens": "Siemens", "ollama": "Ollama", "llama_cpp": "upstream/ik"}.get(str(row.get("backend", "")), row.get("backend", ""))),
+                    "benchmark_display": row.get("benchmark_display", row.get("benchmark", "")),
+                    "datetime_run_started": row.get("datetime_run_started", row.get("run_started_at", row.get("run_started", ""))),
+                    "last_update": row.get("last_update", row.get("run_finished_at", "")),
+                    "wall_s": row.get("wall_s", (float(row["wall_ms"]) / 1000.0) if row.get("wall_ms") is not None else None),
+                    "samples": row.get("samples", row.get("progress", "")),
+                    "vram_free_gb": row.get("vram_free_gb"),
+                    "interpretation": row.get("interpretation", row.get("rating", "")),
                     "date_time": measured_at,
                     "backend": row["backend"],
                     "model": row["model"],
@@ -3816,116 +3960,168 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             )
 
     report_html_path = report_path[:-3] + ".html" if report_path.lower().endswith(".md") else (report_path + ".html")
-    html_lines: List[str] = []
-    html_lines.append("<!doctype html>")
-    html_lines.append("<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Benchmark Report</title></head><body>")
-    html_lines.append("<header class=\"dashboard-header\"><h1>Benchmark Control Center</h1><p class=\"dashboard-subtitle\">Live progress, resource telemetry, and estimated completion.</p></header>")
-    html_lines.append("<section class=\"kpi-grid\">")
-    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Generated</span><strong class=\"kpi-value\">{html.escape(generated)}</strong></div>")
-    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Overall progress</span><strong class=\"kpi-value\">{html.escape(progress_display)}</strong></div>")
-    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">ETA left</span><strong class=\"kpi-value\">{html.escape(fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else 'n/a')}</strong></div>")
-    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Estimated finish</span><strong class=\"kpi-value\">{html.escape(overall_eta_end if overall_eta_end else 'n/a')}</strong></div>")
-    html_lines.append("</section>")
-    html_lines.append("<h2>Benchmark run overview</h2>")
-    html_lines.append("<p>One row per benchmark run. This compact history is retained across report updates; the live-status view below provides scheduling and ETA detail.</p>")
-    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\" id=\"run-overview-table\">")
-    html_lines.append("<thead><tr><th>Date/time</th><th>Backend</th><th>Model</th><th>Profile</th><th>Launch parameters</th><th>Benchmark name</th><th>Samples x/n</th><th>GPU%(avg)</th><th>CPU%(avg)</th><th>VRAM GB(avg)</th><th>RAM GB(proc avg)</th><th>IO read</th><th>IO write</th><th>Score</th><th>Rating score</th><th>Errors</th><th>Tok/s</th><th>Elapsed</th><th>Rating</th><th>Expected success</th><th>Agent suitability</th></tr></thead>")
-    html_lines.append("<tbody>")
-    for row in run_summary_rows:
-        measured_at = str(row["last_update"] or row["run_started"] or row["planned_start"])
-        html_lines.append(
-            "<tr>"
-            f"<td>{html.escape(fmt_clock_or_date(measured_at, report_day))}</td>"
-            f"<td>{html.escape(str(row['backend']))}</td>"
-            f"<td>{html.escape(str(row['model']))}</td>"
-            f"<td>{html.escape(str(row.get('launch_profile', '')))}</td>"
-            f"<td><details><summary>show</summary><code>{html.escape(str(row.get('launch_params', '')))}</code></details></td>"
-            f"<td>{html.escape(str(row['benchmark']))}</td>"
-            f"<td>{html.escape(str(row['progress']))}</td>"
-            f"<td>{fmt(row['avg_gpu'])}</td>"
-            f"<td>{fmt(row['avg_cpu'])}</td>"
-            f"<td>{fmt(row['used_vram_gb'])}</td>"
-            f"<td>{fmt(row['used_ram_gb'])}</td>"
-            f"<td>{fmt(row.get('io_read'), 0)}</td>"
-            f"<td>{fmt(row.get('io_write'), 0)}</td>"
-            f"<td>{fmt(row['score'])}</td>"
-            f"<td>{fmt(row.get('rating_score'))}</td>"
-            f"<td>{int(row['error_count'] or 0)}</td>"
-            f"<td>{fmt(row['tps'])}</td>"
-            f"<td>{html.escape(str(row['elapsed']))}</td>"
-            f"<td>{html.escape(str(row['rating']))}</td>"
-            f"<td>{html.escape(str(row.get('expected_success', '')))}</td>"
-            f"<td>{html.escape(str(row.get('agent_fit', '')))}</td>"
-            "</tr>"
-        )
-    html_lines.append("</tbody></table></div>")
-    html_lines.append("<h2>Current benchmark series status / planned runs</h2>")
-    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\" id=\"live-status-table\">")
-    html_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Status</th><th>Planned start</th><th>Run started</th><th>Last update</th><th>Progress</th><th>Elapsed time</th><th>Elapsed left (est.)</th><th>ETA end</th><th>LLM start<br>(s)</th><th>LLM stop<br>(s)</th><th>Heuristik-Score</th><th>Gesamtbewertung</th><th>Tok/s</th><th>CPU%(avg)</th><th>GPU%(avg)</th><th>RAM GB(proc avg)</th><th>VRAM GB(avg)</th><th>Wall-s(avg)</th></tr></thead>")
-    html_lines.append("<tbody>")
+    raw_by_model: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    for raw in all_rows:
+        raw_by_model.setdefault((raw.get("backend", ""), raw.get("model", "")), []).append(raw)
+    performance_values: List[float] = []
     for row in model_live_rows:
-        html_lines.append(
-            "<tr>"
-            f"<td>{html.escape(str(row['benchmark']))}</td>"
-            f"<td>{html.escape(str(row['backend']))}</td>"
-            f"<td>{html.escape(str(row['model']))}</td>"
-            f"<td><span class=\"status status-{html.escape(str(row['status']).lower().replace(' ', '-'))}\">{html.escape(str(row['status']))}</span></td>"
-            f"<td>{html.escape(fmt_clock_or_date(str(row['planned_start']), report_day))}</td>"
-            f"<td>{html.escape(fmt_clock_or_date(str(row['run_started']), report_day))}</td>"
-            f"<td>{html.escape(fmt_clock_or_date(str(row['last_update']), report_day))}</td>"
-            f"<td>{html.escape(str(row['progress']))}</td>"
-            f"<td>{html.escape(str(row['elapsed']))}</td>"
-            f"<td>{html.escape(str(row['elapsed_left_est']))}</td>"
-            f"<td>{html.escape(fmt_clock_or_date(str(row['eta_end']), report_day))}</td>"
-            f"<td>{fmt(row['llm_startuptime'], 3)}</td>"
-            f"<td>{fmt(row['llm_shutdowntime'], 3)}</td>"
-            f"<td>{fmt(row['score'])}</td>"
-            f"<td>{html.escape(str(row['rating']))}</td>"
-            f"<td>{fmt(row['tps'])}</td>"
-            f"<td>{fmt(row['avg_cpu'])}</td>"
-            f"<td>{fmt(row['avg_gpu'])}</td>"
-            f"<td>{fmt(row['used_ram_gb'])}</td>"
-            f"<td>{fmt(row['used_vram_gb'])}</td>"
-            f"<td>{fmt(row['wall_s'], 2)}</td>"
-            "</tr>"
-        )
-    html_lines.append("</tbody></table></div>")
-    html_lines.append("<h2>Raw metrics per test</h2>")
-    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\">")
-    html_lines.append("<thead><tr>" + "".join(f"<th>{html.escape(col)}</th>" for col in (["_file"] + header)) + "</tr></thead>")
-    html_lines.append("<tbody>")
-    for row in all_rows:
-        html_lines.append(
-            "<tr>" + "".join(f"<td>{html.escape(str(row.get(col, '')))}</td>" for col in (["_file"] + header)) + "</tr>"
-        )
-    html_lines.append("</tbody></table></div>")
-    if history_section_lines:
-        html_lines.extend(history_section_lines)
-    html_lines.extend(sortable_assets)
-    html_lines.append("</body></html>")
-    overview_html_start = html_lines.index("<h2>Benchmark run overview</h2>")
-    live_html_start = html_lines.index("<h2>Current benchmark series status / planned runs</h2>")
-    raw_html_start = html_lines.index("<h2>Raw metrics per test</h2>")
-    history_html_lines = list(history_section_lines)
-    if history_html_lines and history_html_lines[0].startswith("## "):
-        history_html_lines[0] = "<h2>Completed-run history</h2>"
-    summary_html_lines = (
-        html_lines[:overview_html_start]
-        + html_lines[live_html_start:raw_html_start]
-        + history_html_lines
-        + sortable_assets
-        + ["</body></html>"]
-    )
-    live_html_lines = html_lines[:overview_html_start] + html_lines[live_html_start:raw_html_start] + sortable_assets + [
-        "</body></html>"
+        tps_value, wall_value = row.get("tps"), row.get("wall_s")
+        if isinstance(tps_value, (int, float)) and tps_value > 0:
+            performance_values.append(float(tps_value))
+        elif isinstance(wall_value, (int, float)) and wall_value > 0:
+            performance_values.append(1.0 / float(wall_value))
+    perf_lo, perf_hi = (min(performance_values), max(performance_values)) if performance_values else (0.0, 1.0)
+
+    def provider_for(
+        backend: str,
+        server_executable: str = "",
+        launch_profile: str = "",
+        launch_params: str = "",
+    ) -> str:
+        backend_key = (backend or "").lower()
+        if backend_key == "siemens":
+            return "Siemens"
+        if backend_key in {"github", "copilot"}:
+            return "GitHub"
+        if backend_key == "ollama":
+            return "Ollama"
+        if backend_key == "llama_cpp":
+            provenance = " ".join((server_executable, launch_profile, launch_params)).lower()
+            return "ik" if "ik" in provenance or "ik_llama" in provenance else "upstream"
+        if backend_key == "local":
+            return "Local"
+        if backend_key.startswith("local/"):
+            return "Local/" + (backend or "").split("/", 1)[1]
+        return backend or "Local"
+
+    def role_class(quality: float, normalized_performance: float, reliability: float, error: str = "") -> str:
+        if error or reliability < 0.90:
+            return "unreliable for unattended use"
+        if quality >= 85.0 and normalized_performance >= 0.70:
+            return "high quality signal; architecture/reviewer candidate"
+        if quality >= 75.0 and normalized_performance < 0.50:
+            return "good coding signal; slower"
+        if quality < 60.0 and normalized_performance >= 0.70:
+            return "fast screening runner; coding quality weak"
+        if quality >= 70.0:
+            return "good coding signal"
+        return "coding quality weak"
+
+    def grid_rows() -> List[Dict[str, object]]:
+        rows: List[Dict[str, object]] = []
+        task_count = len(BENCH_TASKS)
+        run_count = int(run_count_default or 1)
+        sources: List[Tuple[Dict[str, str], Optional[Dict[str, object]]]] = []
+        for raw in all_rows:
+            sources.append((raw, None))
+        raw_keys = {(r.get("backend", ""), r.get("model", "")) for r in all_rows}
+        for planned in model_live_rows:
+            key = (str(planned.get("backend", "")), str(planned.get("model", "")))
+            if key not in raw_keys:
+                sources.append(({}, planned))
+        for raw, planned in sources:
+            source: Dict[str, object] = planned or raw
+            backend, model = str(source.get("backend", "")), str(source.get("model", ""))
+            summary = summary_by_key.get((backend, model), {})
+            launch_params = str(raw.get("launch_params", "") if raw else source.get("launch_params", ""))
+            server_executable = str(raw.get("server_executable", "") if raw else source.get("server_executable", ""))
+            launch_profile = str(raw.get("launch_profile", "") if raw else source.get("launch_profile", ""))
+            error_text = str(raw.get("error", "")).strip() if raw else ""
+            raw_status = str(raw.get("status", "")).lower() if raw else str(source.get("status", "scheduled")).lower()
+            status = "error" if error_text else ("running" if raw_status == "running" else ("done" if raw else raw_status))
+            if status == "running-error":
+                status = "warning"
+            elif status not in {"scheduled", "running", "done", "error", "warning"}:
+                status = "warning" if "error" in status else "scheduled"
+            quality = (to_float(raw.get("quality_score", "")) or 0.0) if raw else summary.get("quality")
+            reliability = 0.0 if error_text else 1.0
+            tps = (to_float(raw.get("output_tps", "")) or 0.0) if raw else float(source.get("tps") or 0.0)
+            wall_seconds = (
+                (to_float(raw.get("wall_s", "")) or ((to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0))
+                if raw else source.get("wall_s")
+            )
+            perf = tps
+            if perf <= 0 and wall_seconds:
+                perf = 1.0 / float(wall_seconds)
+            normalized_perf = 1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
+            rating_score = (float(quality or 0.0) / 100.0) * normalized_perf * reliability * 100.0
+            role = role_class(float(quality or 0.0), normalized_perf, reliability, error_text)
+            benchmark = str((raw.get("benchmark_name") if raw else source.get("benchmark")) or (benchmark_names[0] if benchmark_names else ""))
+            row_task_count = to_int(raw.get("benchmark_task_count", "")) if raw else None
+            row_run_count = to_int(raw.get("benchmark_runs", "")) if raw else None
+            row_task_count = row_task_count or (task_count if planned else 1)
+            row_run_count = row_run_count or (run_count if planned else 1)
+            benchmark_display = (
+                f"{benchmark} — {row_task_count} task × {row_run_count} runs"
+                if benchmark
+                else ""
+            )
+            sample_text = (
+                f"{raw.get('run', '')}/{row_run_count}" if raw and raw.get("run", "") else
+                str(source.get("progress", "0/?"))
+            )
+            run_started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
+            last_update = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
+            errors = [error_text] if error_text else []
+            rows.append({
+                "benchmark": benchmark_display,
+                "status": status,
+                "provider": provider_for(backend, server_executable, launch_profile, launch_params),
+                "backend": backend,
+                "model": model,
+                "run": raw.get("run", "") if raw else "",
+                "datetime_run_started": fmt_clock_or_date(run_started, report_day),
+                "last_update": fmt_clock_or_date(last_update, report_day),
+                "elapsed": (
+                    str(raw.get("elapsed", ""))
+                    if raw and raw.get("elapsed", "")
+                    else (
+                        fmt_eta((to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0)
+                        if raw and to_float(raw.get("wall_ms", "")) is not None
+                        else str(source.get("elapsed", ""))
+                    )
+                ),
+                "wall_seconds": wall_seconds,
+                "samples": sample_text,
+                "tok_s": raw.get("output_tps") if raw else source.get("tps"),
+                "cpu_percent": raw.get("avg_cpu_pct") if raw else source.get("avg_cpu"),
+                "gpu_percent": raw.get("avg_gpu_pct") if raw else source.get("avg_gpu"),
+                "vram_used_gb": ((to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (source.get("used_vram_gb") if planned else "")),
+                "vram_free_gb": raw.get("vram_free_gb", "") if raw else summary.get("vram_free_gb", ""),
+                "ram_gb": ((to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (source.get("used_ram_gb") if planned else "")),
+                "system_errors": error_text,
+                "heuristic_score": quality,
+                "quality_score": "N/A (same as heuristic score)",
+                "rating_score": rating_score,
+                "rating": role,
+                "launch_params": launch_params,
+                "interpretation": role,
+            })
+        return rows
+
+    grid_data = json.dumps(grid_rows(), ensure_ascii=False).replace("</", "<\\/")
+    eta_text = fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else "n/a"
+    html_lines = [
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        "<title>Benchmark report</title><style>",
+        ":root{color-scheme:dark;--bg:#08111f;--panel:#10213a;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9;--accent:#38bdf8}",
+        "*{box-sizing:border-box}body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:13px/1.4 Segoe UI,Arial,sans-serif}",
+        "header{padding:20px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,#17385b,var(--panel))}",
+        "h1{margin:0 0 5px;font-size:25px}.muted{color:var(--muted)}.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.kpi{padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}",
+        ".toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#162d4a;color:var(--text)}",
+        ".grid-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}.grid{width:100%;min-width:2300px;border-collapse:collapse}.grid th{position:sticky;top:0;background:#1d4166;cursor:pointer;white-space:nowrap}.grid th,.grid td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}.compact .grid th,.compact .grid td{padding:3px 5px;font-size:12px}.grid tbody tr:hover{background:#143252}.status{font-weight:700;text-transform:uppercase}.status-done{color:#6ee7b7}.status-error,.status-warning{color:#fda4af}.status-running{color:#7dd3fc}.status-scheduled{color:#cbd5e1}.params{max-width:340px;white-space:pre-wrap;word-break:break-word}.copy{cursor:pointer;text-decoration:underline dotted}.group{background:#153b5e;font-weight:700}",
+        "</style></head><body><header><h1>Benchmark series status</h1><div class=\"muted\">One offline grid for current and completed runs · generated " + html.escape(generated) + "</div></header>",
+        f"<section class=\"kpis\"><div class=\"kpi\"><b>Progress</b><br>{html.escape(progress_display)}</div><div class=\"kpi\"><b>Calculated ETA / remaining</b><br>{html.escape(eta_text)}</div></section>",
+        "<div class=\"toolbar\"><input id=\"search\" placeholder=\"Filter all columns…\"><select id=\"status\" multiple size=\"1\" title=\"Status filter (Ctrl-click for multiple)\"><option value=\"scheduled\">scheduled</option><option value=\"running\">running</option><option value=\"done\">done</option><option value=\"error\">error</option><option value=\"warning\">warning</option></select><select id=\"group\" multiple size=\"1\" title=\"Multi-column grouping (Ctrl-click for multiple)\"><option value=\"benchmark\">Benchmark</option><option value=\"provider\">Provider</option><option value=\"backend\">Backend</option><option value=\"model\">Model</option></select><button id=\"compact\">Compact/autofit</button></div>",
+        "<div class=\"grid-wrap\"><table class=\"grid\" id=\"grid\"><thead><tr>" + "".join(f"<th data-key=\"{html.escape(k)}\">{html.escape(label)}</th>" for k, label in [
+            ("benchmark","Benchmark name"),("status","Status"),("provider","Provider"),("backend","Backend"),("model","Model"),("run","Run"),("datetime_run_started","Date/time — run started"),("last_update","Last update"),("elapsed","Elapsed"),("wall_seconds","Wall seconds"),("samples","Samples"),("tok_s","Tok/s"),("cpu_percent","CPU%"),("gpu_percent","GPU%"),("vram_used_gb","VRAM used GB"),("vram_free_gb","VRAM free GB"),("ram_gb","RAM GB"),("system_errors","System errors / error text"),("heuristic_score","Heuristic score"),("quality_score","Quality score"),("rating_score","Rating score"),("rating","Rating"),("launch_params","Launch params JSON"),("interpretation","Interpretation")]) + "</tr><tr id=\"column-filters\"></tr></thead><tbody></tbody></table></div>",
+        "<script>const DATA=" + grid_data + ";let sortKey='benchmark',asc=true,compact=false;const esc=s=>String(s??'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));const val=(r,k)=>r[k]??'';function render(){let q=document.getElementById('search').value.toLowerCase(),ss=[...document.getElementById('status').selectedOptions].map(x=>x.value),g=[...document.getElementById('group').selectedOptions].map(x=>x.value);let a=DATA.filter(r=>(!ss.length||ss.includes(r.status))&&(!q||Object.values(r).some(v=>String(v).toLowerCase().includes(q))));a.sort((x,y)=>{let c=String(val(x,sortKey)).localeCompare(String(val(y,sortKey)),undefined,{numeric:true});return asc?c:-c});if(g.length){let out=[],previous=[];a.forEach(r=>{let key=g.map(k=>r[k]);let changed=key.some((v,i)=>v!==previous[i]);if(changed){out.push({__group:key.join(' › ')});previous=key}out.push(r)});a=out}let b=document.querySelector('#grid tbody');b.innerHTML=a.map(r=>r.__group?`<tr class=\"group\"><td colspan=\"24\">${esc(r.__group)}</td></tr>`:`<tr>${Object.keys(DATA[0]||{}).filter(k=>k!=='__group').map(k=>`<td class=\"${k==='status'?'status status-'+esc(r[k]):''}\">${k==='launch_params'?`<details><summary>show</summary><pre class=\"params\">${esc(r[k])}</pre></details>`:k==='system_errors'&&r[k]?`<span class=\"copy\" title=\"Click to copy\" onclick=\"navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(r[k])})\">${esc(r[k])}</span>`:esc(r[k])}</td>`).join('')}</tr>`).join('')}document.querySelectorAll('#grid th').forEach(th=>th.onclick=()=>{let k=th.dataset.key;if(sortKey===k)asc=!asc;else{sortKey=k;asc=true}render()})}document.getElementById('search').oninput=render;document.getElementById('status').onchange=render;document.getElementById('group').onchange=render;document.getElementById('compact').onclick=()=>{compact=!compact;document.body.classList.toggle('compact',compact);render()};render();</script></body></html>"
+        "<script>(function(){const keys=Object.keys(DATA[0]||{}).filter(k=>k!=='__group'),row=document.getElementById('column-filters');keys.forEach(k=>{const cell=document.createElement('th');if(k==='status'){cell.innerHTML='<select data-column-filter=\"status\" multiple size=\"1\" title=\"Status column filter\"><option>scheduled</option><option>running</option><option>done</option><option>error</option><option>warning</option></select>'}else{cell.innerHTML='<input data-column-filter=\"'+esc(k)+'\" placeholder=\"Filter…\" title=\"Filter '+esc(k)+'\">'}row.appendChild(cell)});function filtered(){const filters={};document.querySelectorAll('[data-column-filter]').forEach(el=>{filters[el.dataset.columnFilter]=el.multiple?[...el.selectedOptions].map(o=>o.value.toLowerCase()):el.value.toLowerCase()});return DATA.filter(r=>Object.entries(filters).every(([k,f])=>Array.isArray(f)?(!f.length||f.includes(String(val(r,k)).toLowerCase())):( !f||String(val(r,k)).toLowerCase().includes(f))));}function wire(){document.querySelectorAll('[data-column-filter]').forEach(el=>el.oninput=el.onchange=renderWithFilters);document.querySelectorAll('#grid th[data-key]').forEach(th=>th.onclick=()=>{let k=th.dataset.key;if(sortKey===k)asc=!asc;else{sortKey=k;asc=true}renderWithFilters()});document.getElementById('search').oninput=renderWithFilters;document.getElementById('status').onchange=renderWithFilters;document.getElementById('group').onchange=renderWithFilters;document.getElementById('compact').onclick=()=>{compact=!compact;document.body.classList.toggle('compact',compact);renderWithFilters()}}function renderWithFilters(){const original=DATA.slice(),q=document.getElementById('search').value.toLowerCase(),selected=filtered().filter(r=>!q||Object.values(r).some(v=>String(v).toLowerCase().includes(q)));DATA.splice(0,DATA.length,...selected);render();DATA.splice(0,DATA.length,...original);wire()}wire();renderWithFilters();})();</script></body></html>"
     ]
-
     with open(report_html_path, "w", encoding="utf-8") as fhtml:
-        fhtml.write("\n".join(summary_html_lines))
-
-    live_report_html_path = os.path.join(report_dir, "benchmark_live_status.html")
-    with open(live_report_html_path, "w", encoding="utf-8") as flive_html:
-        flive_html.write("\n".join(live_html_lines))
+        fhtml.write("".join(html_lines))
+    with open(os.path.join(report_dir, "benchmark_live_status.html"), "w", encoding="utf-8") as flive_html:
+        flive_html.write("".join(html_lines))
 
     detail_lines: List[str] = []
     detail_lines.append("# Benchmark Detailed Live Status")
@@ -3936,7 +4132,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     detail_lines.append("## Planned runs (case + run granularity)")
     detail_lines.append("")
     detail_lines.append("<table>")
-    detail_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Case</th><th>Run</th><th>Status</th><th>Planned start</th><th>Run started</th><th>Last update</th><th>Model progress</th><th>Model ETA left</th><th>Model heuristik-score</th><th>Model wall-s(avg)</th></tr></thead>")
+    detail_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Case</th><th>Run</th><th>Status</th><th>Run started</th><th>Last update</th><th>Model progress</th><th>Model heuristik-score</th><th>Model wall-s(avg)</th></tr></thead>")
     detail_lines.append("<tbody>")
     for row in planned_rows:
         detail_lines.append(
@@ -3947,11 +4143,9 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             f"<td>{html.escape(str(row['case_id']))}</td>"
             f"<td>{html.escape(str(row['run']))}</td>"
             f"<td>{html.escape(str(row['status']))}</td>"
-            f"<td>{html.escape(str(row['planned_start']))}</td>"
             f"<td>{html.escape(str(row['run_started']))}</td>"
             f"<td>{html.escape(str(row['last_update']))}</td>"
             f"<td>{html.escape(str(row['model_progress']))}</td>"
-            f"<td>{html.escape(str(row['model_eta_left']))}</td>"
             f"<td>{fmt(row['model_overall'])}</td>"
             f"<td>{fmt(row['model_wall_s'], 2)}</td>"
             "</tr>"
@@ -3969,7 +4163,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     detail_html_lines.append("<h1>Benchmark Detailed Live Status</h1>")
     detail_html_lines.append(f"<p><b>Generated:</b> {html.escape(generated)}</p>")
     detail_html_lines.append("<table class=\"sortable\" id=\"details-planned-table\">")
-    detail_html_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Case</th><th>Run</th><th>Status</th><th>Planned start</th><th>Run started</th><th>Last update</th><th>Model progress</th><th>Model ETA left</th><th>Model heuristik-score</th><th>Model wall-s(avg)</th></tr></thead>")
+    detail_html_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Case</th><th>Run</th><th>Status</th><th>Run started</th><th>Last update</th><th>Model progress</th><th>Model heuristik-score</th><th>Model wall-s(avg)</th></tr></thead>")
     detail_html_lines.append("<tbody>")
     for row in planned_rows:
         detail_html_lines.append(
@@ -3980,11 +4174,9 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             f"<td>{html.escape(str(row['case_id']))}</td>"
             f"<td>{html.escape(str(row['run']))}</td>"
             f"<td>{html.escape(str(row['status']))}</td>"
-            f"<td>{html.escape(str(row['planned_start']))}</td>"
             f"<td>{html.escape(str(row['run_started']))}</td>"
             f"<td>{html.escape(str(row['last_update']))}</td>"
             f"<td>{html.escape(str(row['model_progress']))}</td>"
-            f"<td>{html.escape(str(row['model_eta_left']))}</td>"
             f"<td>{fmt(row['model_overall'])}</td>"
             f"<td>{fmt(row['model_wall_s'], 2)}</td>"
             "</tr>"

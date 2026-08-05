@@ -20,6 +20,8 @@ updated: 2026-08-04T02:30:00+02:00
 - [x] Complete the equivalent upstream and ik matrices for the seven
       compatible installable GGUFs; the exported Qwen-27B file remains
       explicitly excluded as not server-compatible.
+- [x] Publish the unified run-level report contract with provider,
+      provenance, resource, score, error and interpretation fields.
 
 ## Aktueller Zwischenstand — 2026-08-03 18:35
 

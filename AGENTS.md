@@ -7,6 +7,15 @@
 
 ### Stand: 2026-08-05 — Clean benchmark baseline and launch provenance
 
+- The unified report contract is defined in
+  `docs\project\benchmark-report-requirements.md`. The HTML report is one
+  offline grid with per-column filters, multi-status filtering, multi-column
+  grouping, run-level rows, readable role interpretation, and expandable
+  launch parameters.
+- The detail schema is now `benchmark-v2.2`; required additive fields include
+  provider, benchmark display/sample metadata, elapsed/wall time, VRAM free,
+  heuristic/error aliases, rating score and interpretation.
+
 - The Ollama campaign endpoint is `http://127.0.0.1:11434/api/generate`;
   using the base URL for generation causes HTTP 405 and invalidates the run.
 - The 19-model clean Ollama inventory and three-repeat medium rerun completed

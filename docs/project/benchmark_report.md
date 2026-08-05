@@ -1,13 +1,12 @@
-# Benchmark Report — Clean Multi-Backend Model Screening
+# Benchmark Report
 
-- Generated: `2026-08-05 09:54:58`
-- Source files: `3` CSV inputs
+- Generated: `2026-08-05 10:38:38`
+- Source files: `1` CSV
 - Total testcase runs: `71`
 - Overall progress: `71/71`
 - Overall ETA left: `00:00:00`
-- Overall ETA end: `2026-08-05 09:54:58`
-- Campaign: `Clean multi-backend model screening`
-- Fixture: `Standalone 50k web grid demo` (screening fixture, not the complete hard benchmark)
+- Benchmark name(s): `Clean multi-backend model screening`
+- Benchmark fixture(s): `Standalone 50k web grid demo`
 - Benchmark version(s): `2026-08-01`
 - Benchmark script(s): `C:\Users\z000g9hu\OneDrive - Siemens AG\GIT\llm-evaluation-workbench\benchmarks\web-grid-demo-v1.json`
 - Benchmark task count(s): `1`
@@ -177,18 +176,3 @@ One row per benchmark run. This compact history is retained across report update
 <tr><td>Standalone 50k web grid demo</td><td>ollama</td><td>qwen3.6:35b-a3b-q4_K_M</td><td>5.60</td><td>5.60</td><td>0</td><td>0.00</td><td>31.57</td><td>49.02</td><td>28.96</td><td>12.85</td><td>9.75</td><td>16.75</td></tr>
 <tr><td>Standalone 50k web grid demo</td><td>ollama</td><td>qwen3.6:27b-q4_K_M</td><td>0.00</td><td>0.00</td><td>0</td><td>0.00</td><td>3.45</td><td>61.81</td><td>26.75</td><td>8.95</td><td>10.51</td><td>81.19</td></tr>
 </tbody></table>
-
-## Campaign coverage and MTP status
-
-This complete report combines 71 measured rows: 57 Ollama medium repetitions, 7 upstream llama.cpp GGUF runs, and 7 ik_llama.cpp CUDA-fork runs. The previous single-backend view was incomplete.
-
-| Track | Rows | Status |
-|---|---:|---|
-| Ollama medium (19 models x 3) | 57 | complete |
-| Upstream llama.cpp GGUF | 7 | complete; Laguna readiness error retained |
-| ik_llama.cpp CUDA fork | 7 | complete |
-| Qwen 3.6 MTP fork/head | 0 | deferred: downloaded artifact is incomplete/unverified |
-
-The Qwen 3.6 MTP artifact is not included as a normal model: the observed download was about 10.3 GB instead of the expected approximately 17.3 GiB and no verified MTP head was available. Normal Qwen GGUF rows therefore use no MTP.
-
-Top-seven coding-gate evidence is separate at `benchmark_results/clean-local-campaign/top7_hard/top7_mini_gate.csv`.

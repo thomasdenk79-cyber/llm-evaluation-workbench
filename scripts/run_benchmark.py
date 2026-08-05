@@ -15,6 +15,7 @@ import html
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -46,13 +47,29 @@ DEFAULT_PAUSE_FILE = ROOT / "pause.ini"
 DEFAULT_STOP_FILE = ROOT / "stop.ini"
 DEFAULT_LOCK_FILE = ROOT / ".benchmark_master.pid"
 PAUSED_EXIT_CODE = 75
+DEFAULT_SIEMENS_MODELS = [
+    "deepseek-v4-flash",
+    "gpt-oss-120b",
+    "qwen-3.6-27b",
+    "Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+    "ministral-3-14b-instruct-2512",
+]
+
+
+def _repo_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=Path, help="TOML file containing campaign options.")
     p.add_argument("--suites", "--suite", dest="suites", help="Comma-separated suites or JSON suite IDs.")
-    p.add_argument("--backend", choices=["ollama", "llama_cpp", "both"], help="Local backend.")
+    p.add_argument(
+        "--backend",
+        choices=["ollama", "llama_cpp", "siemens", "both", "all"],
+        help="Backend/provider. 'both' is local only; 'all' also includes Siemens.",
+    )
     p.add_argument("--models", action="append", help="Comma-separated model names or fnmatch patterns.")
     p.add_argument("--ollama-model", action="append", dest="ollama_models")
     p.add_argument("--ollama-url", help="Ollama base URL used for wildcard discovery.")
@@ -72,6 +89,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--interactive", action="store_true", help="Use a dependency-free terminal selector.")
     p.add_argument("--show-matrix", action="store_true",
                    help="Print the expanded [[matrix]] wildcard plan (backend/model/benchmark) and exit; no run.")
+    p.add_argument("--validate-config", action="store_true",
+                   help="Validate the campaign and print its resolved plan without running it.")
+    p.add_argument("--doctor", action="store_true",
+                   help="Check campaign, backend availability, model paths, and result directories.")
     p.add_argument("--list-models", action="store_true", help="List installed Ollama models and configured GGUFs.")
     p.add_argument("--pull-ollama", metavar="MODEL", help="Pull an explicitly selected Ollama model.")
     p.add_argument("--llama-install", metavar="NAME=PATH", help="Register an existing GGUF path; never downloads.")
@@ -140,8 +161,51 @@ def _terminal_menu() -> list[str] | None:
 
 
 def _ollama_inventory(url: str) -> list[str]:
-    with urllib.request.urlopen(url.rstrip("/") + "/api/tags", timeout=5) as response:
+    with urllib.request.urlopen(_ollama_base_url(url) + "/api/tags", timeout=5) as response:
         return sorted(str(item["name"]) for item in json.loads(response.read()).get("models", []) if item.get("name"))
+
+
+def _ollama_base_url(url: str) -> str:
+    base_url = url.rstrip("/")
+    if base_url.endswith("/api/generate"):
+        return base_url[:-len("/api/generate")]
+    if base_url.endswith("/api"):
+        return base_url[:-len("/api")]
+    return base_url
+
+
+def _ensure_ollama(url: str, *, auto_start: bool = True, timeout_sec: float = 30.0) -> tuple[bool, str]:
+    """Return Ollama readiness and optionally start `ollama serve` once."""
+    try:
+        names = _ollama_inventory(url)
+        return True, f"ready ({len(names)} installed models)"
+    except Exception as first_error:
+        if not auto_start:
+            return False, str(first_error)
+    executable = shutil.which("ollama")
+    if not executable:
+        return False, "ollama executable not found"
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        subprocess.Popen(
+            [executable, "serve"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    except OSError as exc:
+        return False, f"could not start Ollama: {exc}"
+    deadline = time.monotonic() + timeout_sec
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            names = _ollama_inventory(url)
+            return True, f"started ({len(names)} installed models)"
+        except Exception as exc:
+            last_error = exc
+            time.sleep(1)
+    return False, f"Ollama did not become ready: {last_error}"
 
 
 def _model_management(args: argparse.Namespace, cfg: dict[str, Any]) -> int | None:
@@ -376,6 +440,32 @@ def _read_runner_csvs(work_dir: Path) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for path in sorted(work_dir.glob("migration_llm_bench_*.csv")):
         rows.extend(_read_rows(path))
+    cross_backend = work_dir / "cross_backend_mini.csv"
+    for row in _read_rows(cross_backend):
+        quality = row.get("quality_percent", "")
+        elapsed = row.get("elapsed_seconds", "")
+        rows.append({
+            **row,
+            "benchmark_display": "Cross-backend mini coder - 1 task",
+            "benchmark_name": "cross-backend-mini",
+            "benchmark_task_count": "1",
+            "benchmark_runs": "1",
+            "samples": "1",
+            "provider": "Local/Ollama" if row.get("backend") == "ollama" else "Local/llama.cpp",
+            "run_started_at": row.get("timestamp", ""),
+            "recorded_at": row.get("timestamp", ""),
+            "last_update": row.get("timestamp", ""),
+            "elapsed_seconds": elapsed,
+            "wall_s": elapsed,
+            "output_tps": row.get("tokens_per_second", ""),
+            "system_errors": row.get("error", ""),
+            "error_text": row.get("error", ""),
+            "quality_score": quality,
+            "heuristic_score": quality,
+            "rating_score": row.get("score", ""),
+            "interpretation": row.get("agent_suitability", ""),
+            "launch_params": json.dumps({"configuration": row.get("configuration", "")}),
+        })
     return rows
 
 
@@ -435,19 +525,40 @@ def _dashboard(detail: Path, planned: list[dict[str, str]]) -> None:
 def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], work_dir: Path,
                      overrides: dict[str, Any] | None = None) -> list[str]:
     overrides = overrides or {}
+    option = lambda name, default=None: overrides.get(name, _value(args, cfg, name, default))
     if suite in RUNNERS:
-        command = [sys.executable, str(Path(__file__).with_name(RUNNERS[suite])), *args.legacy_args]
+        script = str(Path(__file__).with_name(RUNNERS[suite]))
+        suite_args = cfg.get("suite_args", {})
+        configured = suite_args.get(suite, []) if isinstance(suite_args, dict) else []
+        if isinstance(configured, str):
+            configured = shlex.split(configured)
+        configured = [str(value) for value in configured] if isinstance(configured, list) else []
+        command = [sys.executable, script, *configured, *args.legacy_args]
+        if suite == "cross-backend":
+            if "--output" not in command:
+                command += ["--output", str(work_dir / "cross_backend_mini.csv")]
+            for model in _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", [])):
+                if "*" not in model and "?" not in model:
+                    command += ["--ollama-model", model]
+            for spec in _split(_value(args, cfg, "llama_models", [])):
+                command += ["--llama-model", spec]
+            if _value(args, cfg, "llama_server"):
+                command += ["--server", str(_value(args, cfg, "llama_server"))]
+            if _value(args, cfg, "ollama_url"):
+                command += ["--ollama-url", _ollama_base_url(str(_value(args, cfg, "ollama_url")))]
+            if _value(args, cfg, "timeout_sec") is not None:
+                command += ["--timeout", str(_value(args, cfg, "timeout_sec"))]
         return command
     command = [sys.executable, str(Path(__file__).with_name("llm_migration_benchmark.py"))]
     if suite != "migration":
         command += ["--benchmark-id", suite]
-    command += ["--backend", str(overrides.get("backend") or _value(args, cfg, "backend", "both")),
+    command += ["--backend", str(option("backend", "both")),
                "--output-dir", str(work_dir), "--report-file", str(ROOT / "docs" / "project" / "benchmark_report.md"),
-               "--runs", str(_value(args, cfg, "runs", 1)),
-               "--resume", ("off" if _value(args, cfg, "run", "resume") == "force"
-                            else _value(args, cfg, "resume", "auto"))]
+               "--runs", str(option("runs", 1)),
+               "--resume", ("off" if option("run", "resume") == "force"
+                            else option("resume", "auto"))]
     command += list(args.legacy_args)
-    backend = str(overrides.get("backend") or _value(args, cfg, "backend", "both"))
+    backend = str(option("backend", "both"))
     models = overrides.get("models")
     if models is None:
         models = _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", []))
@@ -459,15 +570,30 @@ def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], w
         )
         for model in resolved:
             command += ["--ollama-model", model]
-    for spec in _split(_value(args, cfg, "llama_models", [])):
+    llama_specs = _split(option("llama_models", []))
+    if backend == "llama_cpp" and models is not None:
+        aliases = {str(model) for model in models}
+        llama_specs = [
+            spec for spec in llama_specs
+            if spec.partition("=")[0].strip() in aliases
+        ]
+    for spec in llama_specs:
         command += ["--llama-model", spec]
-    if _value(args, cfg, "ollama_url"):
-        command += ["--ollama-url", str(_value(args, cfg, "ollama_url"))]
-    if _value(args, cfg, "llama_server"):
-        command += ["--llama-server", str(_value(args, cfg, "llama_server"))]
-    if _value(args, cfg, "timeout_sec") is not None:
-        command += ["--timeout-sec", str(_value(args, cfg, "timeout_sec"))]
-    runner_args = _value(args, cfg, "runner_args", [])
+    if backend in ("siemens", "all"):
+        siemens_models = (
+            [str(model) for model in models]
+            if models is not None
+            else _split(option("siemens_models", []))
+        )
+        for model in siemens_models:
+            command += ["--siemens-model", model]
+    if option("ollama_url"):
+        command += ["--ollama-url", str(option("ollama_url"))]
+    if option("llama_server"):
+        command += ["--llama-server", str(option("llama_server"))]
+    if option("timeout_sec") is not None:
+        command += ["--timeout-sec", str(option("timeout_sec"))]
+    runner_args = option("runner_args", [])
     if isinstance(runner_args, str):
         runner_args = shlex.split(runner_args)
     runner_args = [str(value) for value in runner_args] if isinstance(runner_args, list) else []
@@ -490,30 +616,96 @@ def _runner_command(suite: str, args: argparse.Namespace, cfg: dict[str, Any], w
 # exactly as before. See docs/project/requirements.md §5.
 # --------------------------------------------------------------------------
 
-def _load_matrix(config_path: Path | None) -> list[dict[str, Any]]:
+def _load_matrix(
+    config_path: Path | None,
+    *,
+    include_synthetic: bool = True,
+) -> list[dict[str, Any]]:
     if not config_path or tomllib is None or not config_path.exists():
         return []
     with config_path.open("rb") as handle:
         data = tomllib.load(handle)
     matrix = data.get("matrix", [])
-    return matrix if isinstance(matrix, list) else []
+    if isinstance(matrix, list) and matrix:
+        return matrix
+    if not include_synthetic:
+        return []
+    cfg = data.get("benchmark", data)
+    benchmarks = _split(cfg.get("benchmarks", []))
+    if not benchmarks:
+        return []
+    configured = _split(cfg.get("backend", "ollama"))
+    backends: list[str] = []
+    for backend in configured:
+        aliases = (
+            ["ollama", "llama_cpp"] if backend == "both"
+            else ["ollama", "llama_cpp", "siemens"] if backend == "all"
+            else [backend]
+        )
+        backends.extend(item for item in aliases if item not in backends)
+    entries: list[dict[str, Any]] = []
+    for backend in backends:
+        entry: dict[str, Any] = {"backend": backend, "benchmarks": benchmarks}
+        if backend == "ollama":
+            models = _split(cfg.get("models", [])) + _split(cfg.get("ollama_models", []))
+        elif backend == "llama_cpp":
+            models = [
+                spec.partition("=")[0].strip()
+                for spec in _split(cfg.get("llama_models", []))
+                if "=" in spec
+            ]
+        else:
+            models = _split(cfg.get("siemens_models", [])) or list(DEFAULT_SIEMENS_MODELS)
+        if models:
+            entry["models"] = models
+        entries.append(entry)
+    return entries
 
 
 def _available_benchmark_files() -> dict[str, Path]:
-    """Map benchmark stem -> path, from the repo's `benchmarks/` directory."""
+    """Map only migration-compatible benchmark fixtures, never arbitrary JSON."""
     out: dict[str, Path] = {}
     benchmarks_dir = ROOT / "benchmarks"
     if benchmarks_dir.is_dir():
         for path in benchmarks_dir.glob("*.json"):
-            out[path.stem] = path
+            if _is_migration_benchmark(path):
+                out[path.stem] = path
     scripts_benchmarks = ROOT / "scripts" / "benchmarks"
     if scripts_benchmarks.is_dir():
         for path in scripts_benchmarks.glob("*.json"):
-            out.setdefault(path.stem, path)
+            if _is_migration_benchmark(path):
+                out.setdefault(path.stem, path)
     return out
 
 
-def expand_matrix(matrix: list[dict[str, Any]], args: argparse.Namespace, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+def _is_migration_benchmark(path: Path) -> bool:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    return (
+        isinstance(payload.get("name"), str)
+        and isinstance(payload.get("spec_version"), str)
+        and isinstance(tasks, list)
+        and bool(tasks)
+        and all(
+            isinstance(task, dict)
+            and task.get("id")
+            and task.get("prompt")
+            and isinstance(task.get("required_keywords"), list)
+            for task in tasks
+        )
+    )
+
+
+def expand_matrix(
+    matrix: list[dict[str, Any]],
+    args: argparse.Namespace,
+    cfg: dict[str, Any],
+    *,
+    resolve_wildcards: bool = True,
+) -> list[dict[str, Any]]:
     """Expand `[[matrix]]` entries into concrete (backend, benchmark_file, models) groups.
 
     Each matrix entry may specify `models` (fnmatch patterns matched against
@@ -527,44 +719,175 @@ def expand_matrix(matrix: list[dict[str, Any]], args: argparse.Namespace, cfg: d
         return []
     ollama_url = str(_value(args, cfg, "ollama_url", "http://127.0.0.1:11434"))
     all_ollama_models = _split(_value(args, cfg, "models", [])) + _split(_value(args, cfg, "ollama_models", []))
-    gguf_names = [spec.split("=", 1)[0].strip() for spec in _split(_value(args, cfg, "llama_models", [])) if "=" in spec]
+    gguf_specs = _split(_value(args, cfg, "llama_models", []))
+    gguf_names = [spec.split("=", 1)[0].strip() for spec in gguf_specs if "=" in spec]
+    siemens_models = _split(_value(args, cfg, "siemens_models", [])) or list(DEFAULT_SIEMENS_MODELS)
     benchmark_files = _available_benchmark_files()
     groups: list[dict[str, Any]] = []
     for entry in matrix:
-        backends = _split(entry.get("backend", _value(args, cfg, "backend", "ollama")))
-        model_patterns = _split(entry.get("models", ["*"]))
+        configured_backends = _split(entry.get("backend", _value(args, cfg, "backend", "ollama")))
+        backends: list[str] = []
+        for backend in configured_backends:
+            expanded = (
+                ["ollama", "llama_cpp"] if backend == "both"
+                else ["ollama", "llama_cpp", "siemens"] if backend == "all"
+                else [backend]
+            )
+            backends.extend(item for item in expanded if item not in backends)
         benchmark_patterns = _split(entry.get("benchmarks", ["*"]))
         matched_benchmarks = sorted({
             stem for pattern in benchmark_patterns for stem in benchmark_files
             if fnmatch.fnmatchcase(stem, pattern)
-        }) or list(benchmark_files.keys())
+        })
         for backend in backends:
+            defaults = (
+                all_ollama_models if backend == "ollama"
+                else gguf_names if backend == "llama_cpp"
+                else siemens_models
+            )
+            model_patterns = _split(entry.get("models", defaults or ["*"]))
             if backend == "ollama":
                 has_wildcard = any("*" in p or "?" in p for p in model_patterns)
                 if has_wildcard:
-                    try:
-                        pool = _ollama_models(model_patterns, ollama_url)
-                    except RuntimeError as exc:
-                        print(f"[matrix] Warning: could not query Ollama tags for pattern "
-                              f"{model_patterns} ({exc}); this group will be skipped.")
-                        pool = []
+                    if not resolve_wildcards:
+                        pool = sorted({
+                            model for pattern in model_patterns for model in all_ollama_models
+                            if fnmatch.fnmatchcase(model, pattern)
+                        }) or list(model_patterns)
+                    else:
+                        try:
+                            pool = _ollama_models(model_patterns, ollama_url)
+                        except RuntimeError as exc:
+                            pool = sorted({
+                                model for pattern in model_patterns for model in all_ollama_models
+                                if fnmatch.fnmatchcase(model, pattern)
+                            })
+                            print(
+                                f"[matrix] Warning: Ollama discovery failed ({exc}); "
+                                f"using {len(pool)} configured matches."
+                            )
                 else:
-                    pool = [m for m in model_patterns if m in all_ollama_models or all_ollama_models == []]
-                    if not pool:
-                        pool = list(model_patterns)
+                    pool = list(model_patterns)
             elif backend == "llama_cpp":
                 pool = sorted({name for pattern in model_patterns for name in gguf_names
-                              if fnmatch.fnmatchcase(name, pattern)}) or gguf_names
+                              if fnmatch.fnmatchcase(name, pattern)})
+            elif backend == "siemens":
+                pool = sorted({
+                    name for pattern in model_patterns for name in siemens_models
+                    if fnmatch.fnmatchcase(name, pattern)
+                }) or ([] if any("*" in p or "?" in p for p in model_patterns) else model_patterns)
             else:
-                pool = list(model_patterns)
+                pool = []
             for benchmark_stem in matched_benchmarks:
                 groups.append({
                     "backend": backend,
                     "models": pool,
                     "benchmark_stem": benchmark_stem,
                     "benchmark_file": str(benchmark_files[benchmark_stem]) if benchmark_stem in benchmark_files else None,
+                    **{
+                        key: value for key, value in entry.items()
+                        if key not in {"backend", "models", "benchmarks"}
+                    },
                 })
     return groups
+
+
+def preview_campaign(config_path: Path) -> list[dict[str, Any]]:
+    """Resolve the exact execution groups shown by CLI and TUI."""
+    cfg = _config(config_path)
+    args = _parser().parse_args(["--config", str(config_path)])
+    matrix = _load_matrix(config_path)
+    if matrix:
+        return expand_matrix(matrix, args, cfg)
+    suites = _split(cfg.get("suites", "migration"))
+    backends = _split(cfg.get("backend", "both"))
+    models = _split(cfg.get("models", [])) + _split(cfg.get("ollama_models", []))
+    runner_args = _split(cfg.get("runner_args", []))
+    explicit_file = ""
+    if "--benchmark-file" in runner_args:
+        index = runner_args.index("--benchmark-file")
+        if index + 1 < len(runner_args):
+            explicit_file = runner_args[index + 1]
+    return [
+        {
+            "backend": backend,
+            "models": models,
+            "benchmark_stem": Path(explicit_file).stem if explicit_file else suite,
+            "benchmark_file": explicit_file or suite,
+        }
+        for backend in backends
+        for suite in suites
+    ]
+
+
+def validate_campaign(config_path: Path) -> list[str]:
+    """Return user-actionable validation errors without starting a run."""
+    errors: list[str] = []
+    if not config_path.is_file():
+        return [f"configuration not found: {config_path}"]
+    try:
+        cfg = _config(config_path)
+    except (OSError, ValueError) as exc:
+        return [f"invalid TOML: {exc}"]
+    backend = str(cfg.get("backend", "both"))
+    if backend not in {"ollama", "llama_cpp", "siemens", "both", "all"}:
+        errors.append(f"unsupported backend: {backend}")
+    for key in ("runs", "timeout_sec"):
+        try:
+            if int(cfg.get(key, 1)) < 1:
+                errors.append(f"{key} must be at least 1")
+        except (TypeError, ValueError):
+            errors.append(f"{key} must be an integer")
+    try:
+        groups = preview_campaign(config_path)
+    except Exception as exc:
+        errors.append(f"campaign expansion failed: {exc}")
+        return errors
+    if not groups:
+        errors.append("campaign resolves to zero execution groups")
+    for group in groups:
+        if not group.get("models") and group.get("backend") != "siemens":
+            errors.append(
+                f"{group.get('backend')} / {group.get('benchmark_stem')}: no models resolved"
+            )
+        benchmark_file = group.get("benchmark_file")
+        if benchmark_file and str(benchmark_file).lower().endswith(".json"):
+            path = Path(str(benchmark_file))
+            if not path.is_absolute():
+                path = ROOT / path
+            if not path.is_file():
+                errors.append(f"benchmark file not found: {path}")
+    return list(dict.fromkeys(errors))
+
+
+def doctor(config_path: Path) -> int:
+    errors = validate_campaign(config_path)
+    print(f"Campaign: {config_path}")
+    print("Config: " + ("OK" if not errors else "INVALID"))
+    for error in errors:
+        print(f"  ERROR {error}")
+    cfg = _config(config_path) if config_path.is_file() else {}
+    backends = {
+        group.get("backend")
+        for group in preview_campaign(config_path)
+    } if not errors else set()
+    if "ollama" in backends:
+        ready, detail = _ensure_ollama(str(cfg.get("ollama_url", "http://127.0.0.1:11434")), auto_start=False)
+        print(f"Ollama: {'OK' if ready else 'UNAVAILABLE'} - {detail}")
+        if not ready:
+            errors.append("Ollama is unavailable")
+    if "llama_cpp" in backends:
+        specs = _split(cfg.get("llama_models", []))
+        missing = [spec for spec in specs if "=" not in spec or not Path(spec.split("=", 1)[1]).is_file()]
+        print(f"llama.cpp: {'OK' if specs and not missing else 'INCOMPLETE'} - {len(specs)} configured GGUFs")
+        errors.extend(f"missing GGUF: {spec}" for spec in missing)
+    if "siemens" in backends:
+        print("Siemens: configured; token and endpoint are checked by the runner without exposing credentials")
+    detail = Path(cfg.get("detail_csv", DEFAULT_DETAIL))
+    if not detail.is_absolute():
+        detail = ROOT / detail
+    print(f"Results: {detail}")
+    return 1 if errors else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -586,35 +909,48 @@ def main(argv: list[str] | None = None) -> int:
         if not raw:
             return 2
     args = _parser().parse_args(raw)
+    if args.legacy_suite and args.suites is None:
+        args.suites = args.legacy_suite
     config_path = args.config or (DEFAULT_CONFIG if DEFAULT_CONFIG.exists() else None)
     cfg = _config(config_path)
     managed = _model_management(args, cfg)
     if managed is not None:
         return managed
+    if args.doctor:
+        if config_path is None:
+            print("No campaign config found; pass --config PATH.")
+            return 2
+        return doctor(config_path)
+    if args.validate_config:
+        if config_path is None:
+            print("No campaign config found; pass --config PATH.")
+            return 2
+        errors = validate_campaign(config_path)
+        if errors:
+            print("Campaign is invalid:")
+            for error in errors:
+                print(f"  - {error}")
+            return 2
+        groups = preview_campaign(config_path)
+        print(f"Campaign is valid: {len(groups)} execution groups.")
+        return 0
     if args.show_matrix:
-        matrix = _load_matrix(config_path)
-        if not matrix:
-            print(f"No [[matrix]] table found in {config_path or '(no config)'}; nothing to expand.")
+        if config_path is None:
+            print("No campaign config found; pass --config PATH.")
+            return 2
+        groups = preview_campaign(config_path)
+        if not groups:
+            print(f"Campaign in {config_path} expands to no execution groups.")
             return 0
-        groups = expand_matrix(matrix, args, cfg)
-        print(f"Expanded {len(matrix)} [[matrix]] entries into {len(groups)} run groups:")
+        print(f"Resolved {len(groups)} run groups:")
         for group in groups:
             models_display = ", ".join(group["models"]) or "(none matched)"
             bench_display = group["benchmark_file"] or f"{group['benchmark_stem']} (file not found)"
             print(f"  backend={group['backend']:<10} benchmark={bench_display:<40} models=[{models_display}]")
         return 0
-    pause_file = Path(_value(args, cfg, "pause_file", DEFAULT_PAUSE_FILE))
-    stop_file = Path(_value(args, cfg, "stop_file", DEFAULT_STOP_FILE))
-    lock_file = Path(_value(args, cfg, "lock_file", DEFAULT_LOCK_FILE))
-    for path in (pause_file, stop_file, lock_file):
-        if not path.is_absolute():
-            path = ROOT / path
-        if path == pause_file:
-            pause_file = path
-        elif path == stop_file:
-            stop_file = path
-        else:
-            lock_file = path
+    pause_file = _repo_path(_value(args, cfg, "pause_file", DEFAULT_PAUSE_FILE))
+    stop_file = _repo_path(_value(args, cfg, "stop_file", DEFAULT_STOP_FILE))
+    lock_file = _repo_path(_value(args, cfg, "lock_file", DEFAULT_LOCK_FILE))
     if args.stop:
         stop_file.touch()
         lock = _read_lock(lock_file)
@@ -653,6 +989,19 @@ def main(argv: list[str] | None = None) -> int:
         if selected:
             args = _parser().parse_args(selected + (["--config", str(config_path)] if config_path else []))
             cfg = _config(config_path)
+    planned_backends = {
+        group.get("backend")
+        for group in preview_campaign(config_path)
+    } if config_path else {str(_value(args, cfg, "backend", "both"))}
+    if planned_backends & {"ollama", "both", "all"}:
+        ready, detail = _ensure_ollama(
+            str(_value(args, cfg, "ollama_url", "http://127.0.0.1:11434")),
+            auto_start=True,
+        )
+        print(f"[ollama] {detail}")
+        if not ready:
+            print("Ollama is required by this campaign but could not be started.")
+            return 1
     if not _acquire_lock(lock_file):
         return 2
     try:
@@ -783,7 +1132,10 @@ def _main_locked_matrix(args: argparse.Namespace, cfg: dict[str, Any], pause_fil
         before = {p for p in work_dir.glob("migration_llm_bench_*.csv") if not p.name.endswith("_inprogress.csv")}
         try:
             command = _runner_command("migration", args, cfg, work_dir, overrides={
-                "backend": group["backend"], "models": group["models"], "benchmark_file": group["benchmark_file"],
+                **group,
+                "backend": group["backend"],
+                "models": group["models"],
+                "benchmark_file": group["benchmark_file"],
             })
             print("Running:", " ".join(shlex.quote(part) for part in command))
             try:

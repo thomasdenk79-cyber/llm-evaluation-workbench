@@ -1,6 +1,6 @@
 # Benchmark Report
 
-- Generated: `2026-08-05 14:53:46`
+- Generated: `2026-08-05 19:33:22`
 - Source files: `1` CSV
 - Total testcase runs: `71`
 - Overall progress: `71/71`
@@ -11,31 +11,6 @@
 - Benchmark script(s): `C:\Users\z000g9hu\OneDrive - Siemens AG\GIT\llm-evaluation-workbench\benchmarks\web-grid-demo-v1.json`
 - Benchmark task count(s): `1`
 - Score semantics: `Heuristik-Score (keyword/rule-basiert, nicht SWE-offizieller Pass/Fail-Score)`
-
-## Current run settings
-
-<table>
-<thead><tr><th>Setting</th><th>Value</th></tr></thead>
-<tbody>
-<tr><td>benchmark_id</td><td>ora-pg-py-33</td></tr>
-<tr><td>benchmark_file</td><td></td></tr>
-<tr><td>backend</td><td>both</td></tr>
-<tr><td>runs</td><td>1</td></tr>
-<tr><td>temp</td><td>0.1</td></tr>
-<tr><td>top_p</td><td>0.9</td></tr>
-<tr><td>repeat_penalty</td><td>1.05</td></tr>
-<tr><td>timeout_sec</td><td>900</td></tr>
-<tr><td>max_tokens</td><td>None</td></tr>
-<tr><td>threads</td><td>30</td></tr>
-<tr><td>ngl</td><td>0</td></tr>
-<tr><td>llama_server</td><td></td></tr>
-<tr><td>llama_batch_size</td><td>1024</td></tr>
-<tr><td>llama_ubatch_size</td><td>256</td></tr>
-<tr><td>llama_fit_target_mib</td><td>1536</td></tr>
-<tr><td>llama_reasoning</td><td>off</td></tr>
-<tr><td>llama_extra_args</td><td></td></tr>
-<tr><td>siemens_workers</td><td>5</td></tr>
-</tbody></table>
 
 ## Model runtime and heuristik-score chart
 

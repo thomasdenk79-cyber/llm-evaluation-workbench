@@ -124,9 +124,9 @@ Die verbindliche Detail-/History-Reihenfolge des Migrationsformats ist
 (History ergänzt vorne `source_csv`; alle übrigen Spalten sind identisch):
 
 ```text
-benchmark_run_id, benchmark_name, benchmark_spec_version,
+benchmark_run_id, schema_version, benchmark_name, benchmark_spec_version,
 benchmark_script_file, benchmark_task_count, benchmark_runs,
-benchmark_task_ids, benchmark_task_hash, backend, model, sample_id,
+benchmark_task_ids, benchmark_task_hash, backend, model, llm_size_bytes, sample_id,
 sample_name, case_id, case_title, run, wall_ms, elapsed_p50_ms,
 elapsed_p95_ms, prompt_tokens,
 output_tokens, output_tps, quality_score, keyword_hits, keyword_total,
@@ -136,7 +136,9 @@ avg_pcie_rx_mb_s, max_pcie_rx_mb_s, avg_pcie_tx_mb_s, max_pcie_tx_mb_s,
 io_read, io_write, local_model_startup_sec, local_model_shutdown_sec,
 cpu_time_sec, recorded_at, status, run_started_at, run_finished_at,
 hardware_profile, provenance, launch_profile, server_executable, model_path,
-launch_params, rating, agent_suitability, output_preview, error
+launch_params, rating, agent_suitability, output_preview, error, provider,
+benchmark_display, datetime_run_started, last_update, elapsed, wall_s, samples,
+vram_free_gb, free_vram_gb, rating_score, interpretation
 ```
 
 `migration_llm_bench_history.csv` beginnt zusätzlich mit `source_csv`.
@@ -148,7 +150,8 @@ Die verbindliche Run-/Summary-Reihenfolge ist:
 ```text
 schema_version, status, run_started_at, run_finished_at, hardware_profile,
 provenance, launch_profile, server_executable, model_path, launch_params,
-llm_size_bytes, date_time, backend, model, benchmark_name, samples_x_n,
+llm_size_bytes, provider, benchmark_display, datetime_run_started, last_update,
+wall_s, samples, vram_free_gb, interpretation, date_time, backend, model, benchmark_name, samples_x_n,
 avg_gpu_percent, avg_cpu_percent, vram_gb,
 pcie_rx_avg_mb_s, pcie_rx_max_mb_s, pcie_tx_avg_mb_s, pcie_tx_max_mb_s,
 io_read, io_write, ram_gb, score, rating_score, errors,
@@ -162,7 +165,9 @@ Qualität, `rating_score` ist die normalisierte Gesamtbewertung des Runs,
 `rating` die lesbare Einstufung und `agent_suitability` die separate
 Agenten-Einschätzung. `elapsed`/`wall_ms` sind End-to-End-Wandzeit,
 `errors` zählt technische Fehler, `io_read`/`io_write` sind gemessene Bytes
-des lokalen Modellprozesses. Nicht messbare Werte bleiben `N/A` bzw. leer;
+des lokalen Modellprozesses. `free_vram_gb`/`vram_free_gb` werden im selben `nvidia-smi`-Sample wie
+`avg_vram_used_mb` gemessen. Historische Werte werden niemals aus
+`Gesamt-VRAM - benutzt` abgeleitet. Nicht messbare Werte bleiben `N/A` bzw. leer;
 `0` ist nur ein tatsächlich gemessener Nullwert. PCIe-Werte sind
 Momentanraten in MB/s und tragen deshalb ihre Einheit im Spaltennamen.
 `launch_params` ist ein sortiertes JSON-Objekt mit Kontextgröße, Threads,
@@ -235,9 +240,15 @@ stop_file = "stop.ini"
 lock_file = ".benchmark_master.pid"
 ```
 
-Ohne Parameter wird die Default-TOML geladen. `--interactive` öffnet einen
-dependency-freien ANSI-/Nummern-Dialog für Suites, Backend und Modelle;
-Tkinter bleibt als legacy GUI-Fallback verfügbar.
+Ohne Parameter in einem interaktiven Terminal öffnet sich die Textual-
+Workbench. Ein expliziter automatisierter Lauf verwendet `--config`, zum
+Beispiel:
+
+```powershell
+python .\scripts\run_benchmark.py --config .\config\benchmark.toml
+```
+
+`--interactive` öffnet weiterhin den dependency-freien ANSI-/Nummern-Dialog.
 Die vorhandenen spezialisierten Runner bleiben interne Implementierungen und
 werden vom Master delegiert.
 

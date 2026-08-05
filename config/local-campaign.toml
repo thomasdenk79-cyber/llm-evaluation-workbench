@@ -1,0 +1,65 @@
+# Declarative replacement for scripts/run_local_campaign.ps1.
+[benchmark]
+suites = "migration"
+backend = "both"
+benchmarks = ["ora-pg-py-33"]
+models = [
+  "qwen3-coder:30b",
+  "deepseek-coder-v2:16b",
+  "qwen3.6:35b-a3b-q4_K_M",
+  "gpt-oss:20b",
+  "qwen3.6:27b-q4_K_M",
+]
+llama_server = 'C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe'
+llama_models = [
+  'qwen3-coder:30b=C:\Users\z000g9hu\llama.cpp\models\qwen3-coder-30b-from-ollama.gguf',
+  'deepseek-coder-v2:16b=C:\Users\z000g9hu\llama.cpp\models\deepseek-coder-v2-16b-from-ollama.gguf',
+  'qwen3.6:35b-a3b=C:\Users\z000g9hu\llama.cpp\models\Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf',
+  'gpt-oss:20b=C:\Users\z000g9hu\llama.cpp\models\gpt-oss-20b-MXFP4.gguf',
+  'qwen3.6:27b-q4_K_M=C:\Users\z000g9hu\llama.cpp\models\qwen3.6-27b-q4_K_M-from-ollama.gguf',
+]
+ollama_url = "http://127.0.0.1:11434/api/generate"
+runs = 3
+timeout_sec = 900
+detail_csv = "benchmark_results/local-campaign/unified_benchmark_detail.csv"
+run = "resume"
+resume = "auto"
+pause_file = "pause.ini"
+stop_file = "stop.ini"
+lock_file = ".benchmark_master.pid"
+vram_headroom_pct = 5
+
+[[matrix]]
+backend = "ollama"
+models = [
+  "qwen3-coder:30b",
+  "deepseek-coder-v2:16b",
+  "qwen3.6:35b-a3b-q4_K_M",
+  "gpt-oss:20b",
+  "qwen3.6:27b-q4_K_M",
+]
+benchmarks = ["ora-pg-py-33"]
+runner_args = ["--ctx-size", "2048", "--threads", "28"]
+
+[[matrix]]
+backend = "llama_cpp"
+models = [
+  "qwen3-coder:30b",
+  "deepseek-coder-v2:16b",
+  "gpt-oss:20b",
+  "qwen3.6:27b-q4_K_M",
+]
+benchmarks = ["ora-pg-py-33"]
+runner_args = [
+  "--llama-ngl", "99",
+  "--llama-extra-args", "--mlock --threads 20",
+]
+
+[[matrix]]
+backend = "llama_cpp"
+models = ["qwen3.6:35b-a3b"]
+benchmarks = ["ora-pg-py-33"]
+runner_args = [
+  "--llama-ngl", "99",
+  "--llama-extra-args", "--override-tensor blk\\..*\\.ffn_(up|down|gate)_exps=CPU --mlock --threads 20",
+]

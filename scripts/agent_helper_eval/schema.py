@@ -290,6 +290,8 @@ class SampleRecord:
     #: failed (no matching process found, access denied) is left None
     #: rather than estimated.
     model_cpu_time_seconds: Optional[float] = None
+    io_read: Optional[int] = None
+    io_write: Optional[int] = None
 
 
 SAMPLE_CSV_COLUMNS = tuple(f.name for f in dataclasses.fields(SampleRecord))
@@ -622,6 +624,8 @@ class AggregateRecord:
     #: samples (see SampleRecord.model_cpu_time_seconds). None if never
     #: attributable for any sample in the group.
     model_cpu_time_seconds_mean: Optional[float] = None
+    io_read_total: Optional[int] = None
+    io_write_total: Optional[int] = None
 
 
 AGGREGATE_CSV_COLUMNS = tuple(f.name for f in dataclasses.fields(AggregateRecord))

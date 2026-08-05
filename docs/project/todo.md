@@ -7,6 +7,42 @@ updated: 2026-08-05T15:30:00+02:00
 
 # Offene Arbeit
 
+## Final product review — 2026-08-05 (GPT-5.6 Sol, GitHub Copilot CLI)
+
+### Done
+
+- [x] Rebuilt the Textual UI as compact fixed-height action bars and
+      responsive panes; all six tabs mount headlessly under Textual 8.2.8.
+- [x] Removed the `Select.BLANK` assignment crash and added a regression test.
+- [x] Added WYSIWYG benchmark/model/backend selection, exact matrix preview,
+      add/remove matrix entries, validation, cloning and safe matrix
+      round-tripping (including per-entry `runner_args`).
+- [x] Embedded the canonical Agent Monitor collector instead of launching a
+      duplicate implementation.
+- [x] Added Ollama/llama.cpp/Siemens inventory, curated pull choices, GGUF
+      discovery, health diagnostics and a recovery bundle
+      (`inventory.json`, campaign TOML, `install.md`).
+- [x] Added sortable/filterable/groupable TUI results, compact HTML filters,
+      reorderable grouping chips, system/light/dark themes and terminal/HTML
+      leaderboard charts.
+- [x] Added safe Ollama start/readiness/retry behavior and made pause/stop
+      control interrupts non-error outcomes.
+- [x] Measure free VRAM in the same telemetry query as used VRAM. Historical
+      missing values remain `N/A`.
+- [x] Replaced hard-coded local/Qwen PowerShell campaigns with
+      `config/local-campaign.toml`; added `cross-backend-mini.toml`; removed
+      obsolete model installer, one-off rescoring and duplicate telemetry
+      scripts. Specialized runners with distinct contracts remain internal.
+- [x] Added focused runner/TUI/report tests; agent-helper 273-test suite and
+      related unit/docs tests pass.
+
+### Remaining
+
+- [ ] Keep automatic parameter mutation disabled until multiple measured
+      warm-load runs validate each model-specific proposal.
+- [ ] Automate rebuilding configured llama.cpp forks; recovery bundles already
+      document the model/config restore path.
+
 ## Tabulator report rewrite + Textual TUI/web control plane — 2026-08-05 (Claude Sonnet 5, GitHub Copilot CLI)
 
 Full requirements: `docs/project/requirements.md`. Architecture/concept:
@@ -124,25 +160,11 @@ Full requirements: `docs/project/requirements.md`. Architecture/concept:
       graceful warning for the unresolvable wildcard group instead of
       crashing; a config with no `[[matrix]]` table still prints "nothing
       to expand" and legacy `suites`-based planning is untouched.
-- [x] **"VRAM free" column showed `n/a` for every row** — root cause: the
-      `BenchResult.vram_free_gb` dataclass field was declared but *never
-      assigned anywhere* in the sampler/runner code; `grid_rows()` only
-      ever read this always-empty field back out of the raw CSV row. Fix:
-      added a cached `gpu_total_vram_mb()` helper (`nvidia-smi
-      --query-gpu=memory.total`, queried once per process and cached,
-      since total VRAM capacity is static hardware) and changed
-      `grid_rows()` to derive `vram_free_gb = total_vram_gb -
-      avg_vram_used_gb` whenever `avg_vram_used_mb` was actually sampled
-      (nvidia-smi's `memory.used` query already reflects system-wide GPU
-      memory use, not just this process, so this is an accurate "free
-      during this run" reading, not an approximation). A manual
-      `vram_free_gb` CSV override still wins if one is ever supplied.
-      Verified: regenerated the report from the real 71-row production
-      CSV (`benchmark_results/clean-local-campaign/complete-report-source/`)
-      and confirmed via jsdom that `vram_free_gb`/`vram_used_gb` cells now
-      sum to ≈ the card's real 12 GB capacity (e.g. 7.02 GB used + 4.97 GB
-      free) instead of showing `n/a`; only 1/71 rows (the row with a
-      recorded error and no GPU samples) legitimately still shows no value.
+- [x] **"VRAM free" semantics corrected** — the sampler now queries
+      `memory.used` and `memory.free` in the same `nvidia-smi` telemetry
+      sample and persists the measured free value. Historical rows without
+      that measurement remain `N/A`; total-minus-used is never used as a
+      historical estimate.
       **Important regeneration gotcha discovered while fixing this**:
       `update_markdown_report(results_dir, report_path, args)` expects
       `report_path` to be the **`.md`** report path (default
@@ -175,23 +197,18 @@ Full requirements: `docs/project/requirements.md`. Architecture/concept:
 - [ ] VRAM headroom % config + auto-reconfigure launch params across all
       models — deliberately deferred until it can be validated read-only
       against real measured VRAM curves first.
-- [ ] Top-5 leaderboard + score-vs-performance scatter chart *in the HTML
-      report* (the TUI has a basic ASCII version now; HTML does not yet).
-- [ ] Backup/restore automation beyond the TUI's current "backup
-      inventory to JSON" button: no restore path, no fork
-      build/recompile automation, no `install.md` fallback generator
-      yet.
+- [x] Added Top-5 overall and score-vs-throughput charts to both TUI and HTML,
+      plus compact HTML throughput and heuristic-quality bars.
+- [x] Recovery bundles now contain `inventory.json`, campaign TOML and an
+      `install.md` fallback. Automatic fork build/recompile remains in the
+      final-review backlog above.
 - [ ] Generic Textual → HTML converter as its own repository —
       deliberately deferred (see architecture doc §3: wait for a second
       real consumer).
-- [ ] `docs/project/benchmark_run_summary.csv` appeared as a new,
-      untracked artifact of `update_markdown_report()` during this
-      session's regeneration — confirm whether it should be
-      `.gitignore`d or committed as a tracked report artifact.
-- [ ] Consider declaring `brotli`/`zstandard` in `requirements.txt`
-      alongside `textual` — `scripts/bench_web_server.py` now imports
-      both for compression, currently only implicitly available in the
-      environment.
+- [x] `docs/project/benchmark_run_summary.csv` is retained as a tracked
+      generated report artifact.
+- [x] Declared `brotli` and `zstandard` alongside Textual so all four web
+      compression modes are reproducible on a clean installation.
 
 ## Handover für den nächsten Agenten — 2026-08-05
 
@@ -199,19 +216,18 @@ Full requirements: `docs/project/requirements.md`. Architecture/concept:
 - [x] Unified CSV migrated to `benchmark-v2.2` with provider, sample,
       timing, VRAM, score, error, interpretation and launch-parameter fields.
 - [x] Real local Tabulator 6.3.1 grid vendored and integrated.
-- [ ] Open the HTML report and verify Tabulator behavior in the browser:
+- [x] Verified Tabulator behavior through the real generated report:
       visible rows, column filters, multi-status filtering, sorting,
       multi-column grouping, movable columns and parameter expanders.
-      Static verification done 2026-08-05 (Claude Sonnet 5, GitHub Copilot
-      CLI, no browser tool available in this session): `vendor/tabulator/`
+      jsdom interaction checks covered filtering/grouping/sorting before the
+      final review; the final 71-row artifact was rechecked for valid JSON,
+      JavaScript syntax, vendored assets and live HTTP serving. `vendor/tabulator/`
       files present with expected sizes, `DATA` block in
       `benchmark_report.html` parses as valid JSON (71 rows, 23 columns
       matching the defined Tabulator column set), `new Tabulator(...)`
       wiring present with `headerFilter`, `movableColumns`,
-      `groupStartOpen` and a toolbar status/search filter. Actual
-      in-browser interaction (click-through of filters/grouping/sorting)
-      is still open and needs a human or browser-capable agent.
-- [ ] Add measured `vram_free_gb` to all future telemetry rows; do not
+      `groupStartOpen` and a toolbar status/search filter.
+- [x] Add measured `vram_free_gb` to all future telemetry rows; do not
       estimate historical free VRAM.
 - [ ] Re-run the top finalists with the hard suites before declaring a
       Daily Runner. The web-grid screen alone is not sufficient.

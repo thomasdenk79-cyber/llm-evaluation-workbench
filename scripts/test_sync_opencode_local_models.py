@@ -118,11 +118,11 @@ class LocalModelSyncTests(unittest.TestCase):
             context=262144,
         )
 
-        preset = sync_models.render_llama_presets([model])
+        preset = sync_models.render_llama_presets([model], max_context=32768)
 
         self.assertIn("[large-model]", preset)
         self.assertIn(r"model = C:\models\large-00001-of-00002.gguf", preset)
-        self.assertIn("ctx-size = 262144", preset)
+        self.assertIn("ctx-size = 32768", preset)
         self.assertIn("cache-type-k = q4_0", preset)
 
     def test_normalizes_qwen_and_ollama_export_names(self) -> None:
@@ -163,6 +163,27 @@ class LocalModelSyncTests(unittest.TestCase):
         self.assertEqual(list(models), ["local:q4"])
         self.assertEqual(models["local:q4"]["limit"]["context"], 65536)
         self.assertEqual(len(warnings), 2)
+
+    def test_context_cap_applies_to_ollama_discovery(self) -> None:
+        def requester(
+            url: str,
+            payload: dict[str, object] | None,
+        ) -> dict[str, object]:
+            if url.endswith("/api/tags"):
+                return {"models": [{"name": "local:q4", "size": 42}]}
+            return {
+                "model_info": {"test.context_length": 262144},
+                "capabilities": ["completion"],
+                "parameters": "num_ctx 262144",
+            }
+
+        models, _ = sync_models.discover_ollama_models(
+            "http://127.0.0.1:11434",
+            requester=requester,
+            max_context=32768,
+        )
+
+        self.assertEqual(models["local:q4"]["limit"]["context"], 32768)
 
     def test_model_definition_caps_native_context_to_operating_budget(self) -> None:
         definition = sync_models.model_definition("Ollama | large", context=262144)

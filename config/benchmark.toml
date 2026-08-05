@@ -1,0 +1,20 @@
+# Default configuration for scripts/run_benchmark.py.
+[benchmark]
+schema_version = "campaign-v2"
+suites = "migration"
+backend = "ollama"
+benchmarks = ["ora-pg-py-33"]
+models = ["*qwen*"]
+ollama_url = "http://127.0.0.1:11434"
+llama_models = []
+llama_server = ""
+runs = 1
+timeout_sec = 900
+detail_csv = "benchmark_results/unified_benchmark_detail.csv"
+# resume keeps the durable detail and *_inprogress CSVs; force writes a new run file.
+run = "resume"
+resume = "auto"
+pause_file = "pause.ini"
+stop_file = "stop.ini"
+lock_file = ".benchmark_master.pid"
+vram_headroom_pct = 5

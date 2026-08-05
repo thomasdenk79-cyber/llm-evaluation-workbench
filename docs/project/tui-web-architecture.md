@@ -74,23 +74,23 @@ remainder, ordered by value/effort, for the next agent or session to pick up.
 
 Launched automatically when `run_benchmark.py` is invoked with **no CLI
 arguments in an interactive TTY** (non-interactive/CI invocations, and any
-invocation with an explicit `--config`/flags, are unaffected -- this
-preserves existing automation such as `run_local_campaign.ps1`). It can
+invocation with an explicit `--config`/flags, are unaffected. Former
+hard-coded campaign wrappers are represented by TOML, for example
+`config/local-campaign.toml`. It can
 also be started directly: `python scripts\llm_bench_tui.py`.
 
 Screens (all navigable by keyboard *and* mouse, per the user's request):
 
-- **Dashboard** -- live status table (reads the same
+- **Dashboard** -- compact live status and detached run log (reads the same
   `unified_benchmark_detail.csv` / `.master_runs` state `run_benchmark.py`
-  already maintains), a progress bar, and Start / Pause / Resume / Stop
-  buttons that just create/remove `pause.ini` / `stop.ini` -- i.e. the TUI
+  already maintains), and Start / Pause / Resume / Stop
+  actions that create/remove `pause.ini` / `stop.ini` -- i.e. the TUI
   is a thin client over the *existing*, already-tested control protocol,
   not a new one.
-- **Config** -- loads the active campaign TOML (`config/benchmark.toml` or
-  `config/clean-local-campaign.toml`), renders every key as a typed widget
-  (`Input`, `Switch`, `Select`), "Save", and "Reset to defaults" (defaults
-  sourced from a small `DEFAULT_CAMPAIGN` dict shipped with the TUI so a
-  reset never depends on the file it is resetting).
+- **Config** -- loads any campaign TOML, exposes benchmark/model
+  multi-selection, backend/runs/timeout/headroom fields, exact matrix-plan
+  preview, add/remove matrix entries, validation, cloning, read-only launch
+  tuning, Save, and safe reset-to-defaults.
 - **Models & backends** -- lists installed Ollama tags (via
   `agent_helper_eval.ollama_inventory`) and configured llama.cpp GGUF
   paths side by side with a fit/VRAM column; actions to pull a new Ollama
@@ -104,10 +104,11 @@ Screens (all navigable by keyboard *and* mouse, per the user's request):
   identical status colors. Supports a filter input row and column-click
   sort; "Open in browser" (`os.startfile`) and "Open in Excel"
   (writes a `.xlsx`-compatible CSV and opens it) actions.
-- **Leaderboard** -- Top-5-overall table plus a score-vs-elapsed scatter
-  (via the `plotext`-backed Textual widget if available, otherwise a
-  degraded bar-chart fallback so the screen never crashes without the
-  optional dependency).
+- **Leaderboard** -- Top-5-overall table plus dependency-free terminal
+  quality bars and a speed/quality scatter.
+- **Agent monitor** -- embeds the canonical Tommy Agent Monitor collector,
+  showing system, agent and local-engine telemetry without copying the
+  monitor implementation.
 
 ### 2. Web control plane (`scripts/bench_web_server.py`)
 
@@ -157,29 +158,19 @@ inside this workbench's repo. Recommendation, not yet started:
 
 ## Wildcard campaign matrix
 
-`config/*.toml` already supports `fnmatch`-style wildcards for
-`--models`/`ollama_models` (see `_ollama_models()` in `run_benchmark.py`).
-Extending this to a full matrix -- e.g. "models 1+2 run `ora2pg`, `qwen*`
-runs `*hard*`" -- needs one addition: an optional `[[matrix]]` array of
-tables, each with `models`, `benchmarks`, `backend` (all fnmatch patterns),
-expanded into concrete `(model, benchmark, backend)` triples before
-planning. Documented here as the target shape; not yet implemented (see
-Backlog).
+`config/*.toml` supports an optional `[[matrix]]` array of tables with
+`models`, `benchmarks`, `backend` and optional per-entry `runner_args`.
+`run_benchmark.py` expands those definitions into concrete execution groups.
+The Config tab previews the same groups, can add/remove definitions, and
+round-trips per-entry parameters without flattening or discarding them.
 
 ## VRAM headroom %
 
-Target: one `vram_headroom_pct` (default `5`) config value that, when
-changed, re-derives per-model launch parameters (`ngl`, `ctx_size`,
-`batch_size`, offload profile) for *every* configured model so free VRAM
-after load stays close to the target -- too little headroom causes CPU/RAM
-swapping (slow), too much wastes GPU offload (also slow). This needs a
-per-backend formula (ollama's `num_gpu`/`main_gpu` heuristics differ from
-llama.cpp's explicit `--n-gpu-layers`), which should be derived from the
-`unified_benchmark_detail.csv` history already being collected
-(`vram_used_gb`/`vram_free_gb` are already measured fields). Not yet
-implemented (see Backlog) -- this is a data-driven tuning feature and
-deserves its own validation pass against real measured runs before it
-starts silently rewriting launch parameters.
+Campaigns expose `vram_headroom_pct` (default `5`). **Tune** produces a
+read-only per-model proposal for GPU layers, context and batch sizes. It does
+not silently rewrite launch parameters. New measurements record used and
+free VRAM in the same `nvidia-smi` telemetry sample; historical free VRAM
+remains `N/A` when it was not measured.
 
 ## Implemented this round
 
@@ -191,11 +182,14 @@ starts silently rewriting launch parameters.
       output on a background thread so a quiet benchmark cannot freeze the
       TUI; Config offers benchmark-file and model selection; local GGUFs are
       discovered from the standard llama.cpp model directories; and the
-      Agent monitor tab launches the existing `wt-command-center` monitor
-      instead of duplicating its collector.
+      Agent monitor tab embeds the existing `wt-command-center` collector
+      and can still open the full canonical monitor.
 - [x] Results use the benchmark field from the shared report payload, expose
       Tasks instead of a duplicate Run column, and sort when a column header
       is selected.
+- [x] TUI and HTML both provide a Top-5 overall view and score-vs-throughput
+      visualization; the HTML additionally retains compact throughput and
+      heuristic-quality bars.
 - [x] `run_benchmark.py` now launches the Textual TUI (instead of the
       Tkinter `_gui()`) when invoked with no arguments in an interactive
       terminal; unchanged behavior otherwise.
@@ -203,34 +197,16 @@ starts silently rewriting launch parameters.
       existing Tabulator report plus a compressed JSON API and
       pause/resume/stop control endpoints.
 
-## Backlog (not implemented this round, prioritized)
+## Remaining backlog
 
-1. **Wildcard campaign matrix** (`[[matrix]]` TOML shape above) -- medium
-   effort, high value, safe (pure planning-time expansion).
-2. **LLM parameter catalog with descriptions + reset-to-default +
-   best-run suggestion** -- needs a small static catalog (ollama vs
-   llama.cpp params, defaults, one-line descriptions) plus a "suggest
-   from history" query over `unified_benchmark_detail.csv` grouped by
-   model, ranked by `heuristic_score`/`wall_seconds`.
-3. **VRAM headroom % auto-reconfig** -- data-tuning feature, needs
-   validation against real measured VRAM curves before it is allowed to
-   rewrite launch parameters automatically; start read-only ("here is
-   what I would change") before making it mutate configs.
-4. **Top-5 leaderboard + score-vs-performance chart in the HTML report**
-   -- straightforward addition to the already-shipped Tabulator page (an
-   SVG/Canvas scatter of `heuristic_score` vs `wall_seconds` per model,
-   grouped/colored by backend).
-5. **Backup/restore of LLM + backend configuration** -- snapshot
-   `ollama list`/`ollama show` output and the llama.cpp GGUF registry
-   (`config/*.toml` `llama_models`) into a versioned JSON, with a restore
-   path that re-pulls/re-registers on a fresh machine.
-6. **Fork build automation** -- attempt `cmake --build` for a configured
+1. **Automatic parameter mutation** -- keep the current Tune proposal
+   read-only until multiple measured runs prove a safe model-specific rule.
+2. **Fork build automation** -- attempt `cmake --build` for a configured
    llama.cpp fork checkout when its source is present; when it is not (or
    the toolchain is missing), emit a durable `docs/operations/install.md`
-   with the exact steps so an agent without build tools can still follow
-   them autonomously (this half already exists as a fallback pattern the
-   user explicitly asked for).
-7. **Generic Textual → HTML converter as its own repo** -- deferred by
+   with the exact steps. The current inventory backup already emits a
+   model/backend `install.md`, inventory JSON and campaign TOML.
+3. **Generic Textual → HTML converter as its own repo** -- deferred by
    design until a second real consumer exists (see above).
 
 Each backlog item is independently shippable; none of them block the

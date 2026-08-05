@@ -53,6 +53,8 @@ class ResourceStats:
     #: found, or psutil access was denied -- never fabricated. See
     #: :meth:`ResourceMonitor._model_process_cpu_time_delta_seconds`.
     model_process_cpu_time_seconds: Optional[float] = None
+    io_read: Optional[int] = None
+    io_write: Optional[int] = None
 
 
 def summarize_samples(
@@ -167,6 +169,8 @@ class ResourceMonitor:
         # when no matching process is found.
         self._first_cpu_times_by_pid: Optional[dict[int, float]] = None
         self._last_cpu_times_by_pid: dict[int, float] = {}
+        self._first_io_by_pid: Optional[dict[int, tuple[int, int]]] = None
+        self._last_io_by_pid: dict[int, tuple[int, int]] = {}
 
     def _matching_pids(self) -> list[int]:
         pids: list[int] = []
@@ -185,6 +189,7 @@ class ResourceMonitor:
             total_rss = 0
             found_any = False
             current_cpu_times: dict[int, float] = {}
+            current_io: dict[int, tuple[int, int]] = {}
             for pid in self._matching_pids():
                 try:
                     proc = psutil.Process(pid)
@@ -192,6 +197,8 @@ class ResourceMonitor:
                     found_any = True
                     times = proc.cpu_times()
                     current_cpu_times[pid] = times.user + times.system
+                    io = proc.io_counters()
+                    current_io[pid] = (int(io.read_bytes), int(io.write_bytes))
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
             if found_any:
@@ -200,6 +207,10 @@ class ResourceMonitor:
                 if self._first_cpu_times_by_pid is None:
                     self._first_cpu_times_by_pid = dict(current_cpu_times)
                 self._last_cpu_times_by_pid = current_cpu_times
+            if current_io:
+                if self._first_io_by_pid is None:
+                    self._first_io_by_pid = dict(current_io)
+                self._last_io_by_pid = current_io
         else:
             self.ram_mb_samples.append(psutil.virtual_memory().used / (1024 * 1024))
         gpu_percent, vram_mb = self._gpu_query()
@@ -233,6 +244,19 @@ class ResourceMonitor:
             self._sample_once()
             self._stop_event.wait(self._interval)
 
+    def _process_io_delta(self) -> tuple[Optional[int], Optional[int]]:
+        if self._first_io_by_pid is None or not self._last_io_by_pid:
+            return None, None
+        read = sum(
+            max(self._last_io_by_pid.get(pid, (0, 0))[0] - first[0], 0)
+            for pid, first in self._first_io_by_pid.items()
+        )
+        write = sum(
+            max(self._last_io_by_pid.get(pid, (0, 0))[1] - first[1], 0)
+            for pid, first in self._first_io_by_pid.items()
+        )
+        return read, write
+
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("ResourceMonitor.start() called twice on the same instance")
@@ -249,6 +273,10 @@ class ResourceMonitor:
         base = summarize_samples(
             self.cpu_samples, self.ram_mb_samples, self.gpu_samples, self.vram_mb_samples
         )
+        io_read, io_write = self._process_io_delta()
         return dataclasses.replace(
-            base, model_process_cpu_time_seconds=self._model_process_cpu_time_delta_seconds()
+            base,
+            model_process_cpu_time_seconds=self._model_process_cpu_time_delta_seconds(),
+            io_read=io_read,
+            io_write=io_write,
         )

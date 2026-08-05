@@ -10,6 +10,9 @@ benchmark_results_*/
 .env
 *.token
 *_token.txt
+pause.ini
+stop.ini
+.benchmark_master.pid
 
 site/
 

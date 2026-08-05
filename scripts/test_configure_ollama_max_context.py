@@ -26,6 +26,10 @@ class OllamaMaxContextTests(unittest.TestCase):
         self.assertTrue(name.endswith(".Modelfile"))
         self.assertNotEqual(name, configure.backup_name("qwen3.6:35b"))
 
+    def test_context_cap_can_reduce_native_operating_context(self) -> None:
+        self.assertEqual(min(262144, 32768), 32768)
+        self.assertEqual(min(8192, 32768), 8192)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3455,6 +3455,11 @@ class LiveGatesTests(unittest.TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        runtime_patcher = mock.patch.object(
+            live_gates.local_lock, "_assert_runtime_available", return_value=None
+        )
+        runtime_patcher.start()
+        self.addCleanup(runtime_patcher.stop)
 
     def _fresh_root(self) -> Path:
         tmp = tempfile.TemporaryDirectory()
@@ -4705,11 +4710,14 @@ class SerialCampaignLiveGatesWiringTests(unittest.TestCase):
             json_transport=_fake_json_transport_no_models_loaded,
             monitor_factory=_FakeMonitor,
         )
-        result = serial_campaign.run_serial_campaign(
-            root, plan, confirm=True,
-            connect_gate_kwargs=dict(shared_kwargs, stream_transport=_fake_stream_transport_ok_response),
-            mini_gate_kwargs=dict(shared_kwargs, stream_transport=_fake_stream_transport_reference_solution),
-        )
+        with mock.patch.object(
+            live_gates.local_lock, "_assert_runtime_available", return_value=None
+        ):
+            result = serial_campaign.run_serial_campaign(
+                root, plan, confirm=True,
+                connect_gate_kwargs=dict(shared_kwargs, stream_transport=_fake_stream_transport_ok_response),
+                mini_gate_kwargs=dict(shared_kwargs, stream_transport=_fake_stream_transport_reference_solution),
+            )
         self.assertEqual([(s.gate, s.outcome) for s in result.steps], [("connect", "accepted"), ("mini", "accepted")])
         db_path = orchestrator.campaign_output_dir(root, "camp-e2e") / storage.DB_FILENAME
         conn = storage.connect(db_path)

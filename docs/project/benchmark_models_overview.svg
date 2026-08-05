@@ -3,7 +3,7 @@
 <rect x="0" y="0" width="1220" height="100%" fill="url(#bg)"/>
 <rect x="8" y="8" width="1204" height="48" rx="8" fill="#ffffff" stroke="#dbeafe"/>
 <text x="18" y="30" font-family="Segoe UI, Arial" font-size="18" font-weight="600" fill="#0f172a">Benchmark model overview</text>
-<text x="18" y="47" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Benchmark: Standalone 50k web grid demo | Updated: 2026-08-05 14:53:46</text>
+<text x="18" y="47" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Benchmark: Standalone 50k web grid demo | Updated: 2026-08-05 19:33:22</text>
 <text x="540" y="78" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Heuristik-Score (0-100)</text>
 <text x="848" y="78" font-family="Segoe UI, Arial" font-size="12" fill="#334155">Runtime avg (s)</text>
 <rect x="12" y="85" width="1196" height="28" rx="6" fill="#ffffff" stroke="#e5e7eb"/>

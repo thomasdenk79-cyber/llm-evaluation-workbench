@@ -296,6 +296,8 @@ def build_aggregate_for_group(
         s.orchestrator_cpu_time_seconds for s in group if s.orchestrator_cpu_time_seconds is not None
     ]
     model_cpu_values = [s.model_cpu_time_seconds for s in group if s.model_cpu_time_seconds is not None]
+    io_read_values = [s.io_read for s in group if s.io_read is not None]
+    io_write_values = [s.io_write for s in group if s.io_write is not None]
 
     return AggregateRecord(
         schema_version=SCHEMA_VERSION,
@@ -385,6 +387,8 @@ def build_aggregate_for_group(
         model_load_seconds_mean=_mean(model_load_values),
         orchestrator_cpu_time_seconds_mean=_mean(orchestrator_cpu_values),
         model_cpu_time_seconds_mean=_mean(model_cpu_values),
+        io_read_total=sum(io_read_values) if io_read_values else None,
+        io_write_total=sum(io_write_values) if io_write_values else None,
     )
 
 

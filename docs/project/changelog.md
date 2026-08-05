@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-08-05 — Full workbench review and consolidation
+
+- Rebuilt the Textual application as a compact, mouse-first six-tab control
+  center and fixed the Textual 8 `Select.BLANK` startup crash.
+- Added lossless visual campaign matrices, exact previews, validation,
+  cloning, tuning proposals, local/cloud model inventory, recovery bundles,
+  embedded Agent Monitor telemetry, multi-column result grouping and
+  leaderboard charts.
+- Hardened Ollama startup/readiness/retry and pause/stop semantics; detached
+  runs from the TUI through durable logs.
+- Replaced hard-coded local/Qwen wrappers with TOML, retained unique
+  benchmark-contract runners as internal adapters, and removed obsolete
+  placeholder/one-off/duplicate scripts.
+- Corrected report semantics: planned rows have blank evaluation fields and
+  free VRAM is persisted only when measured in the same telemetry sample.
+- Added the HTML Top-5 overall leaderboard and score-vs-throughput scatter,
+  alongside the existing throughput and quality bars.
+- Fixed relative pause/stop/lock paths so controls work regardless of the
+  launch directory, and moved the VRAM tuning probe off the Textual event
+  loop.
+- Removed the report renderer's hidden dependency on
+  `config/local-campaign.toml`; completed reports now derive task/run counts
+  from their own CSV provenance. The canonical report is again exactly
+  `71/71`, not an invented 33-task future campaign.
+- Added focused campaign/TUI/report regressions and made live-gate tests
+  independent of the workstation's active gaming resource policy.
+
 ## 2026-08-05 — TUI control center, embedded web control plane, wildcard campaign matrix, VRAM-free fix
 
 - **Textual TUI** (`scripts/llm_bench_tui.py`, new): running `run_benchmark.py`
@@ -25,15 +52,10 @@
   planning is unchanged. Wildcard model resolution against an unreachable
   Ollama endpoint now degrades to a skipped group with a warning instead of
   crashing the whole run.
-- **Fixed: "VRAM free" column always showed `n/a`.** Root cause: the
-  `vram_free_gb` field was declared on `BenchResult` but never assigned
-  anywhere in the sampler/runner. Added a cached `gpu_total_vram_mb()`
-  helper (`nvidia-smi --query-gpu=memory.total`, static hardware value,
-  queried once per process) and derived `vram_free_gb = total_vram_gb -
-  avg_vram_used_gb` in the report's `grid_rows()` — nvidia-smi's
-  `memory.used` already reflects system-wide GPU memory use, so this is an
-  accurate "free during this run" reading, not an approximation. A manual
-  `vram_free_gb` CSV value still wins if one is ever supplied.
+- **Fixed: "VRAM free" column always showed `n/a`.** New samples query
+  `memory.used` and `memory.free` together and persist the direct
+  measurement. Historical rows without that field remain `N/A`; the report
+  does not infer free memory from total capacity.
 - Regenerated `benchmark_report.html/.md`, `benchmark_live_status.html/.md`,
   `benchmark_report_details.html/.md`, `benchmark_models_overview.svg`, and
   `benchmark_run_summary.csv` from the real 71-row production CSV

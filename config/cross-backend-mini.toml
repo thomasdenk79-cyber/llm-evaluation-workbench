@@ -1,0 +1,19 @@
+# One-task deterministic coder gate. The implementation remains an internal
+# suite adapter; the campaign matrix belongs here.
+[benchmark]
+suites = "cross-backend"
+backend = "both"
+models = ["qwen3.6:27b-q4_K_M"]
+llama_server = 'C:\Users\z000g9hu\llama.cpp-ik\build-cuda-v133-installed\bin\Release\llama-server.exe'
+llama_models = [
+  'qwen3.6-27b=C:\Users\z000g9hu\llama.cpp\models\qwen3.6-27b-q4_K_M-from-ollama.gguf',
+]
+ollama_url = "http://127.0.0.1:11434/api/generate"
+runs = 1
+timeout_sec = 3600
+detail_csv = "benchmark_results/cross-backend-mini/unified_benchmark_detail.csv"
+run = "resume"
+resume = "auto"
+pause_file = "pause.ini"
+stop_file = "stop.ini"
+lock_file = ".benchmark_master.pid"

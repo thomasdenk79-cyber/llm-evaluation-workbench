@@ -54,6 +54,30 @@
 
 ## Aktueller Stand
 
+### Stand: 2026-08-05 — Workbench-Produktreview abgeschlossen
+
+- Kanonischer Einstieg ist `scripts\run_benchmark.py`; ohne Parameter im
+  interaktiven Terminal startet die kompakte Textual-Workbench mit Dashboard,
+  Config, Models, Results, Leaderboard und eingebettetem Agent Monitor.
+- Kampagnen sind TOML-basiert. `[[matrix]]`-Definitionen inklusive
+  `runner_args` werden visuell geplant und verlustfrei gespeichert.
+  `config\local-campaign.toml` ersetzt die gelöschten Hardcode-Wrapper.
+- Das HTML/TUI-Reporting hat Filter, Sortierung, geordnete Gruppierung und
+  Top-5-, Balken- und Score-vs-Durchsatz-Charts. Abgeschlossene Reports
+  leiten Plan/Fortschritt nur aus ihrer eigenen CSV-Provenienz ab; der
+  kanonische Produktionsreport steht bei `71/71`. Geplante/pausierte/
+  gestoppte Zeilen haben keine erfundenen Scores. Freies VRAM wird zusammen
+  mit belegtem VRAM gemessen; historische Lücken bleiben `N/A`.
+- Ollama wird geprüft und bei Bedarf gestartet; Transport-Retries beachten
+  Pause/Stop. Relative Kontrollpfade werden am Repo verankert. TUI-Läufe
+  schreiben in persistente Logs und überleben das Schließen der Oberfläche;
+  Status-, Discovery- und Tuning-Probes blockieren den Eventloop nicht.
+- Obsolete Wrapper, Platzhalter-Installer, einmaliges Rescoring und doppelte
+  Telemetrie wurden entfernt. Spezialisierte Runner mit eigenem Ergebnis-/
+  Sicherheitsvertrag bleiben interne Adapter.
+- Validiert: fokussierte Workbench-Tests, Agent-Helper **273/273**,
+  Modell-/Understanding-/Docs-Tests, Kampagnenvalidierung und Web-Smoke.
+
 ### Stand: 2026-08-03 — Daily-Coder-Mini-Gates abgeschlossen
 
 - `daily-coder-20260803` testete zehn explizite lokale Kandidaten seriell
@@ -703,7 +727,7 @@ Compare local Ollama/llama.cpp models and Siemens cloud models for:
 |---|---|
 | Current handoff and mandatory rules | this `AGENTS.md` |
 | Benchmark implementation | `scripts\llm_migration_benchmark.py` |
-| Campaign orchestration | `scripts\run_benchmark_campaign.ps1`, `scripts\run_local_campaign.ps1` |
+| Campaign orchestration | `scripts\run_benchmark.py`, `config\*.toml` |
 | Human-readable current report | `docs\project\benchmark_report.md` |
 | Detailed live plan/status | `docs\project\benchmark_report_details.md` |
 | Comparison table | `docs\project\comparison_table.md` |

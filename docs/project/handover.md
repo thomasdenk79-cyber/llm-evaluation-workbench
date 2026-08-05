@@ -7,6 +7,42 @@ updated: 2026-08-05T16:15:00+02:00
 
 # Session handover
 
+## Current handover — final workbench review (GPT-5.6 Sol)
+
+The full product review is complete. `scripts/run_benchmark.py` is the
+canonical entry, parameterless interactive invocation opens the compact
+six-tab Textual workbench, and the browser control plane remains on
+`127.0.0.1:8766`.
+
+Key state:
+
+- Config supports flat campaigns and lossless `[[matrix]]` definitions with
+  per-entry parameters. `config/local-campaign.toml` replaces the deleted
+  hard-coded local/Qwen wrappers; `cross-backend-mini.toml` configures the
+  retained deterministic cross-backend contract.
+- Dashboard execution is detached to a durable log, status polling is
+  off-thread, and pause/resume/stop use the active campaign's paths.
+- Models includes Ollama, discovered/registered GGUFs and Siemens models,
+  plus pull choices, Doctor and a recovery bundle.
+- Agent Monitor is embedded through its canonical collector and supports
+  environment-path overrides.
+- HTML/TUI results support sorting, filtering and ordered grouping. Planned
+  rows keep scores/suitability/interpretation blank. Free VRAM is measured in
+  the same sample as used VRAM; historical missing values stay `N/A`.
+- The HTML report includes Top-5 overall, score-vs-throughput scatter and
+  throughput/quality bars. Completed reports derive progress only from their
+  own CSV metadata; the canonical production report is `71/71`.
+- Relative control paths are anchored at the repository, so pause/resume/stop
+  work from every launch directory. Status, discovery and VRAM tuning probes
+  stay off the Textual event loop.
+- Removed obsolete hard-coded campaigns, placeholder model downloader,
+  one-off rescoring script, duplicate telemetry collectors and duplicate
+  benchmark JSON. Distinct benchmark-contract runners remain internal.
+
+Verification: 13 focused workbench tests, 273 agent-helper tests, 25 related model
+and understanding tests, docs tests, compilation, campaign validation and
+live web API/control smoke tests.
+
 ## Current handover — 2026-08-05, continued (Claude Sonnet 5, GitHub Copilot CLI)
 
 ### Context
@@ -30,10 +66,9 @@ section (now mostly moved to "Done").
    flag. Verified with a temp test config (literal + wildcard entries);
    an unreachable-Ollama wildcard now degrades gracefully with a warning
    instead of crashing.
-3. **Fixed "VRAM free" showing `n/a` for every row** — the
-   `vram_free_gb` field was declared but never populated anywhere. Added
-   `gpu_total_vram_mb()` (cached `nvidia-smi --query-gpu=memory.total`)
-   and derived `vram_free_gb = total - avg_vram_used_gb` in `grid_rows()`.
+3. **Fixed "VRAM free" measurement** — new rows query used and free VRAM
+   in the same telemetry sample. Historical rows without a direct free-VRAM
+   measurement remain `N/A`; no total-minus-used value is invented.
    **While fixing this, discovered and corrected a real regression risk**:
    calling `update_markdown_report()` with an `.html` `report_path`
    (instead of the expected `.md`) silently corrupts the real Tabulator

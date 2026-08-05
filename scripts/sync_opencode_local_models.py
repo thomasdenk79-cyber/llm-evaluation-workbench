@@ -212,6 +212,7 @@ def model_definition(
 def discover_ollama_models(
     base_url: str,
     requester: Callable[[str, dict[str, object] | None], dict[str, Any]] = request_json,
+    max_context: int | None = None,
 ) -> tuple[dict[str, object], list[str]]:
     tags = requester(f"{base_url.rstrip('/')}/api/tags", None).get("models", [])
     if not isinstance(tags, list):
@@ -262,11 +263,16 @@ def discover_ollama_models(
         except (OSError, ValueError, urllib.error.URLError) as error:
             warnings.append(f"Using default metadata for {name}: {error}")
 
+        if max_context is not None:
+            context = min(context, max_context)
         models[name] = model_definition(f"Ollama | {name}", context, image_input)
     return models, warnings
 
 
-def render_llama_presets(models: list[GgufModel]) -> str:
+def render_llama_presets(
+    models: list[GgufModel],
+    max_context: int | None = None,
+) -> str:
     sections = []
     for model in models:
         if "\n" in str(model.path) or "=" in str(model.path):
@@ -274,7 +280,7 @@ def render_llama_presets(models: list[GgufModel]) -> str:
         sections.append(
             f"[{model.alias}]\n"
             f"model = {model.path}\n"
-            f"ctx-size = {model.context}\n"
+            f"ctx-size = {min(model.context, max_context) if max_context else model.context}\n"
             "flash-attn = on\n"
             "cache-type-k = q4_0\n"
             "cache-type-v = q4_0\n"
@@ -299,6 +305,7 @@ def update_opencode_config(
     llama_models: list[GgufModel],
     ollama_base_url: str,
     llama_base_url: str,
+    max_context: int | None = None,
     dry_run: bool = False,
 ) -> bool:
     if not path.is_file():
@@ -331,7 +338,7 @@ def update_opencode_config(
         "models": {
             model.alias: model_definition(
                 f"llama.cpp | {model.alias}",
-                model.context,
+                min(model.context, max_context) if max_context else model.context,
             )
             for model in llama_models
         },
@@ -371,14 +378,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=home / "llama.cpp" / "models" / "router-models.ini",
     )
     parser.add_argument("--llama-url", default="http://127.0.0.1:8080/v1")
+    parser.add_argument(
+        "--max-context",
+        type=int,
+        help="Cap the operating context for both Ollama and llama.cpp models.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.max_context is not None and args.max_context <= 0:
+        raise ValueError("--max-context must be a positive integer")
     try:
-        ollama_models, ollama_warnings = discover_ollama_models(args.ollama_url)
+        ollama_models, ollama_warnings = discover_ollama_models(
+            args.ollama_url,
+            max_context=args.max_context,
+        )
         if not ollama_models:
             ollama_warnings.append(
                 "No local Ollama models discovered; existing OpenCode entries were preserved"
@@ -397,7 +414,7 @@ def main() -> int:
     if not args.dry_run:
         preset_changed = atomic_write(
             args.llama_preset,
-            render_llama_presets(llama_models),
+            render_llama_presets(llama_models, args.max_context),
         )
     config_changed = update_opencode_config(
         args.opencode_config,
@@ -405,6 +422,7 @@ def main() -> int:
         llama_models,
         args.ollama_url,
         args.llama_url,
+        args.max_context,
         args.dry_run,
     )
 

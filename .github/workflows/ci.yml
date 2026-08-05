@@ -26,9 +26,11 @@ jobs:
       - name: Compile scripts
         run: |
           python -m py_compile scripts/llm_migration_benchmark.py
-          python -m py_compile scripts/metrics/os_stats_perf_mon.py
-          python -m py_compile scripts/metrics/system_metrics_collctor.py
+          python -m py_compile scripts/run_benchmark.py
+          python -m py_compile scripts/llm_bench_tui.py
+          python -m py_compile scripts/bench_web_server.py
 
       - name: Benchmark CLI smoke test
         run: |
-          python scripts/llm_migration_benchmark.py --help > /dev/null
+          python scripts/run_benchmark.py --help > /dev/null
+          python scripts/run_benchmark.py --config config/benchmark.toml --validate-config

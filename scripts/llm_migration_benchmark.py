@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -50,7 +51,7 @@ DETAIL_CSV_COLUMNS = [
     "rating", "agent_suitability", "output_preview", "error",
     # Additive report-facing metadata; legacy columns above remain unchanged.
     "provider", "benchmark_display", "datetime_run_started", "last_update",
-    "elapsed", "wall_s", "samples", "vram_free_gb", "rating_score",
+    "elapsed", "wall_s", "samples", "vram_free_gb", "free_vram_gb", "rating_score",
     "interpretation",
     "heuristic_score", "error_text", "avg_vram_used_gb", "avg_mem_gb",
     "system_errors",
@@ -574,6 +575,7 @@ class SystemMonitor:
         self.mem_samples: List[float] = []
         self.gpu_samples: List[float] = []
         self.vram_samples: List[float] = []
+        self.vram_free_samples: List[float] = []
         self.pcie_rx_samples: List[float] = []
         self.pcie_tx_samples: List[float] = []
         self.io_read_samples: List[int] = []
@@ -588,7 +590,7 @@ class SystemMonitor:
     def _check_nvidia_smi() -> bool:
         try:
             r = subprocess.run(
-                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.free", "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
                 timeout=2,
@@ -599,32 +601,34 @@ class SystemMonitor:
             return False
 
     @staticmethod
-    def _query_gpu() -> Tuple[Optional[float], Optional[float]]:
+    def _query_gpu() -> Tuple[Optional[float], Optional[float], Optional[float]]:
         try:
             r = subprocess.run(
-                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.free", "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
                 timeout=3,
                 check=False,
             )
             if r.returncode != 0:
-                return None, None
+                return None, None, None
             lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
             if not lines:
-                return None, None
+                return None, None, None
             gpu_utils = []
             vram_used = []
+            vram_free = []
             for line in lines:
                 parts = [p.strip() for p in line.split(",")]
-                if len(parts) >= 2:
+                if len(parts) >= 3:
                     gpu_utils.append(float(parts[0]))
                     vram_used.append(float(parts[1]))
+                    vram_free.append(float(parts[2]))
             if not gpu_utils:
-                return None, None
-            return mean(gpu_utils), mean(vram_used)
+                return None, None, None
+            return mean(gpu_utils), mean(vram_used), mean(vram_free)
         except Exception:
-            return None, None
+            return None, None, None
 
     @staticmethod
     def _query_pcie() -> Tuple[Optional[float], Optional[float]]:
@@ -664,11 +668,13 @@ class SystemMonitor:
                 self.io_write_samples.append(io_write)
             self._io_last = (io_read, io_write)
             if self.nvidia_smi_available:
-                gpu, vram = self._query_gpu()
+                gpu, vram, vram_free = self._query_gpu()
                 if gpu is not None:
                     self.gpu_samples.append(gpu)
                 if vram is not None:
                     self.vram_samples.append(vram)
+                if vram_free is not None:
+                    self.vram_free_samples.append(vram_free)
                 pcie_rx, pcie_tx = self._query_pcie()
                 if pcie_rx is not None:
                     self.pcie_rx_samples.append(pcie_rx)
@@ -749,6 +755,7 @@ class SystemMonitor:
             "max_gpu_pct": max(self.gpu_samples) if self.gpu_samples else None,
             "avg_vram_used_mb": mean(self.vram_samples) if self.vram_samples else None,
             "max_vram_used_mb": max(self.vram_samples) if self.vram_samples else None,
+            "avg_vram_free_mb": mean(self.vram_free_samples) if self.vram_free_samples else None,
             "avg_pcie_rx_mb_s": mean(self.pcie_rx_samples) if self.pcie_rx_samples else None,
             "max_pcie_rx_mb_s": max(self.pcie_rx_samples) if self.pcie_rx_samples else None,
             "avg_pcie_tx_mb_s": mean(self.pcie_tx_samples) if self.pcie_tx_samples else None,
@@ -1412,25 +1419,65 @@ def ollama_generate(
         method="POST",
     )
     attempts = 3
-    last_error = None
     for attempt in range(1, attempts + 1):
+        if not wait_for_benchmark_control():
+            raise BenchmarkControlRequested("stop requested")
         try:
             with urllib.request.urlopen(req, timeout=args.timeout_sec) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw)
         except urllib.error.HTTPError as exc:
-            last_error = exc
-            if exc.code >= 500 and attempt < attempts:
+            if (exc.code == 429 or exc.code >= 500) and attempt < attempts:
                 time.sleep(2 * attempt)
                 continue
             raise
-        except Exception as exc:
-            last_error = exc
+        except (urllib.error.URLError, TimeoutError, socket.timeout):
             if attempt < attempts:
-                time.sleep(1.0)
+                if not wait_for_ollama(api_url):
+                    raise BenchmarkControlRequested("stop requested")
                 continue
             raise
-    raise RuntimeError(f"Ollama generate failed after retries: {last_error}")
+    raise RuntimeError("Ollama generate retry loop exhausted")
+
+
+class BenchmarkControlRequested(RuntimeError):
+    """Pause/stop control interrupted a backend request without creating an error row."""
+
+
+def wait_for_benchmark_control(
+    pause_file: Optional[Path] = None,
+    stop_file: Optional[Path] = None,
+) -> bool:
+    root = Path(__file__).resolve().parents[1]
+    pause_path = pause_file or root / "pause.ini"
+    stop_path = stop_file or root / "stop.ini"
+    if stop_path.exists():
+        return False
+    if pause_path.exists():
+        print(f"[PAUSED] Remove {pause_path} to resume.", flush=True)
+    while pause_path.exists():
+        if stop_path.exists():
+            return False
+        time.sleep(1)
+    return not stop_path.exists()
+
+
+def start_ollama_service() -> tuple[bool, str]:
+    executable = shutil.which("ollama")
+    if not executable:
+        return False, "ollama executable not found"
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        subprocess.Popen(
+            [executable, "serve"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    except OSError as exc:
+        return False, str(exc)
+    return True, "started ollama serve"
 
 
 def wait_for_ollama(api_url: str, stop_file: Optional[Path] = None) -> bool:
@@ -1442,26 +1489,31 @@ def wait_for_ollama(api_url: str, stop_file: Optional[Path] = None) -> bool:
         base_url = base_url[:-len("/api")]
     tags_url = base_url + "/api/tags"
     warned = False
+    start_attempted = False
     root = Path(__file__).resolve().parents[1]
     pause_file = root / "pause.ini"
     stop_path = stop_file or root / "stop.ini"
     while True:
-        if stop_path.exists():
+        if not wait_for_benchmark_control(pause_file, stop_path):
             return False
-        if pause_file.exists():
-            print(f"[PAUSED] Remove {pause_file} to resume.", flush=True)
-            while pause_file.exists() and not stop_path.exists():
-                time.sleep(3)
-            continue
         try:
             with urllib.request.urlopen(tags_url, timeout=5):
                 return True
         except Exception as exc:
             if not warned:
-                print(f"[ollama] unavailable ({exc}); retrying every 5s. "
-                      "Use pause.ini to pause or stop.ini to terminate.", flush=True)
+                print(
+                    f"[ollama] unavailable ({exc}); recovery started. "
+                    "Use pause.ini to pause or stop.ini to terminate.",
+                    flush=True,
+                )
                 warned = True
-            time.sleep(5)
+            if not start_attempted:
+                start_attempted = True
+                started, detail = start_ollama_service()
+                print(f"[ollama] {detail}", flush=True)
+                if not started and "not found" in detail:
+                    return False
+            time.sleep(2)
 
 
 def ollama_warmup_model(api_url: str, model: str, timeout_sec: int) -> float:
@@ -1558,6 +1610,7 @@ def run_ollama_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
             avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
             max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
             avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -1568,6 +1621,9 @@ def run_ollama_case(
             output_preview=cleaned_text[:220].replace("\n", "\\n"),
             error="",
         )
+    except BenchmarkControlRequested:
+        monitor.stop()
+        raise
     except urllib.error.URLError as exc:
         err = f"Ollama connection failed: {exc}"
     except Exception as exc:
@@ -1597,6 +1653,7 @@ def run_ollama_case(
         max_gpu_pct=m["max_gpu_pct"],
         avg_vram_used_mb=m["avg_vram_used_mb"],
         max_vram_used_mb=m["max_vram_used_mb"],
+        vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
         avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
         max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
         avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -1678,6 +1735,7 @@ def run_llama_cpp_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
             avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
             max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
             avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -1742,6 +1800,7 @@ def run_llama_cpp_case(
                 max_gpu_pct=m["max_gpu_pct"],
                 avg_vram_used_mb=m["avg_vram_used_mb"],
                 max_vram_used_mb=m["max_vram_used_mb"],
+                vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
                 avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
                 max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
                 avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -1781,6 +1840,7 @@ def run_llama_cpp_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
             avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
             max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
             avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -1822,6 +1882,7 @@ def run_llama_cpp_case(
         max_gpu_pct=m["max_gpu_pct"],
         avg_vram_used_mb=m["avg_vram_used_mb"],
         max_vram_used_mb=m["max_vram_used_mb"],
+        vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
         avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
         max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
         avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -2205,6 +2266,7 @@ def run_llama_server_model(
                             max_gpu_pct=m["max_gpu_pct"],
                             avg_vram_used_mb=m["avg_vram_used_mb"],
                             max_vram_used_mb=m["max_vram_used_mb"],
+                            vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
                             avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
                             max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
                             avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
@@ -2242,6 +2304,7 @@ def run_llama_server_model(
                             max_gpu_pct=m["max_gpu_pct"],
                             avg_vram_used_mb=m["avg_vram_used_mb"],
                             max_vram_used_mb=m["max_vram_used_mb"],
+                            vram_free_gb=(m["avg_vram_free_mb"] / 1024.0) if m["avg_vram_free_mb"] is not None else None,
                             cpu_time_sec=time.process_time() - cpu_start,
                             output_preview="",
                             error=f"llama-server call failed: {exc}",
@@ -2472,10 +2535,10 @@ def save_results(
         if backend_key in {"github", "copilot"}:
             return "GitHub"
         if backend_key == "ollama":
-            return "Ollama"
+            return "Local/Ollama"
         if backend_key == "llama_cpp":
             provenance = " ".join((server_executable, launch_profile, launch_params)).lower()
-            return "ik" if "ik" in provenance or "ik_llama" in provenance else "upstream"
+            return "Local/ik" if "ik" in provenance or "ik_llama" in provenance else "Local/upstream"
         if backend_key == "local":
             return "Local"
         if backend_key.startswith("local/"):
@@ -2549,6 +2612,7 @@ def save_results(
             "wall_s": r.wall_s,
             "samples": r.samples,
             "vram_free_gb": r.vram_free_gb if r.vram_free_gb is not None else "",
+            "free_vram_gb": r.vram_free_gb if r.vram_free_gb is not None else "",
             "rating_score": r.rating_score,
             "interpretation": r.interpretation,
             "heuristic_score": quality,
@@ -2861,6 +2925,8 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 "local_startup_s": local_startup_s,
                 "local_shutdown_s": local_shutdown_s,
                 "expected_samples": expected_samples,
+                "task_count": task_count,
+                "run_count": run_count,
                 "remaining_samples": remaining_samples,
                 "eta_seconds": eta_seconds,
                 "eta_left": fmt_eta(eta_seconds),
@@ -3410,35 +3476,8 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         lines.append("</tbody></table>")
         lines.append("")
 
-    campaign_path = os.path.join("scripts", "run_local_campaign.ps1")
-    campaign_text = ""
     campaign_ollama_models: List[str] = []
     campaign_llama_models: List[str] = []
-    if os.path.exists(campaign_path):
-        try:
-            with open(campaign_path, encoding="utf-8") as f:
-                campaign_text = f.read()
-            extra_args = sorted(set(re.findall(r'--llama-extra-args",\s*"([^"]+)"', campaign_text)))
-            ngl_args = sorted(set(re.findall(r'--llama-ngl",\s*"([^"]+)"', campaign_text)))
-            llama_models_raw = re.findall(r'--llama-model",\s*"([^"]+)"', campaign_text)
-            ollama_models_raw = re.findall(r'--ollama-model",\s*"([^"]+)"', campaign_text)
-            llama_models = sorted(set(llama_models_raw))
-            ollama_models = sorted(set(ollama_models_raw))
-            campaign_ollama_models = list(ollama_models_raw)
-            campaign_llama_models = [m.split("=", 1)[0].strip() for m in llama_models_raw if "=" in m]
-            lines.append("## Configured llama.cpp campaign settings")
-            lines.append("")
-            lines.append("<table>")
-            lines.append("<thead><tr><th>Key</th><th>Values</th></tr></thead>")
-            lines.append("<tbody>")
-            lines.append(f"<tr><td>ollama-models</td><td>{html.escape(' | '.join(ollama_models) if ollama_models else '')}</td></tr>")
-            lines.append(f"<tr><td>llama-ngl</td><td>{html.escape(', '.join(ngl_args) if ngl_args else '')}</td></tr>")
-            lines.append(f"<tr><td>llama-extra-args</td><td>{html.escape(' | '.join(extra_args) if extra_args else '')}</td></tr>")
-            lines.append(f"<tr><td>llama-model specs</td><td>{html.escape(' | '.join(llama_models) if llama_models else '')}</td></tr>")
-            lines.append("</tbody></table>")
-            lines.append("")
-        except OSError:
-            pass
 
     summary_by_key: Dict[Tuple[str, str], Dict[str, object]] = {
         (str(r["backend"]), str(r["model"])): r for r in summary_rows
@@ -3464,7 +3503,16 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         run_vals = [to_int(r.get("run", "")) for r in all_rows]
         run_vals = [v for v in run_vals if v is not None]
         run_count_default = max(run_vals) if run_vals else 1
-    task_defs = [(str(t["id"]), str(t["title"])) for t in BENCH_TASKS]
+    if args is not None:
+        task_defs = [(str(t["id"]), str(t["title"])) for t in BENCH_TASKS]
+    else:
+        task_defs = list(dict.fromkeys(
+            (str(row.get("case_id", "")), str(row.get("case_title", "")))
+            for row in all_rows
+            if row.get("case_id")
+        ))
+        if not task_defs:
+            task_defs = [(str(t["id"]), str(t["title"])) for t in BENCH_TASKS]
     successful_wall_seconds: List[float] = []
     for row in summary_rows:
         try:
@@ -3490,10 +3538,11 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     planned_rows: List[Dict[str, object]] = []
     for backend, model in sorted(planned_model_keys):
         sm = summary_by_key.get((backend, model))
+        model_run_count = int(sm.get("run_count") or run_count_default or 1) if sm else int(run_count_default or 1)
         model_started_dt = parse_ts(str(sm["run_started_at"])) if sm and sm.get("run_started_at") else None
         model_last_update = str(sm["run_last_updated_at"]) if sm else ""
         model_eta_left = str(sm["eta_left"]) if sm else ""
-        model_progress = str(sm["samples_display"]) if sm else f"0/{len(task_defs) * int(run_count_default or 1)}"
+        model_progress = str(sm["samples_display"]) if sm else f"0/{len(task_defs) * model_run_count}"
         model_overall = float(sm["overall"]) if sm and sm.get("overall") is not None else None
         model_status = str(sm["status"]) if sm else "scheduled"
         avg_sample_s = (float(sm["wall_ms"]) / 1000.0) if (sm and sm.get("wall_ms") is not None) else global_avg_wall_s
@@ -3502,7 +3551,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         running_key: Optional[Tuple[str, str, str, int]] = None
         ordered_keys: List[Tuple[str, str, str, int]] = []
         for case_id, _case_title in task_defs:
-            for run_no in range(1, int(run_count_default or 1) + 1):
+            for run_no in range(1, model_run_count + 1):
                 ordered_keys.append((backend, model, case_id, run_no))
         missing = [k for k in ordered_keys if k not in row_lookup]
         if model_status.startswith("running") and missing:
@@ -4135,14 +4184,16 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             if status not in {"scheduled", "running", "done", "error", "warning", "paused", "stopped"}:
                 status = "warning" if "error" in status else "scheduled"
             measured = bool(raw)
-            quality = (to_float(raw.get("quality_score", "")) or 0.0) if raw else (
-                float(summary.get("quality") or 0.0) if summary else None
-            )
-            tps = to_float(raw.get("output_tps", "")) or 0.0 if raw else float(source.get("tps") or 0.0)
-            wall = to_float(raw.get("wall_s", "")) if raw else source.get("wall_s")
+            quality = (to_float(raw.get("quality_score", "")) or 0.0) if raw else None
+            tps = to_float(raw.get("output_tps", "")) or 0.0 if raw else None
+            wall = to_float(raw.get("wall_s", "")) if raw else None
             if wall is None and raw:
                 wall = (to_float(raw.get("wall_ms", "")) or 0.0) / 1000.0
-            perf = tps if tps > 0 else (1.0 / wall if wall and wall > 0 else 0.0)
+            perf = (
+                tps
+                if tps is not None and tps > 0
+                else (1.0 / wall if wall is not None and wall > 0 else 0.0)
+            )
             normalized = (
                 1.0 if perf_hi <= perf_lo else max(0.0, min(1.0, (perf - perf_lo) / (perf_hi - perf_lo)))
             ) if measured else None
@@ -4155,37 +4206,29 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             # benchmark is the plain fixture display name only; task/run counts are
             # separate sortable/filterable columns instead of being baked into the text.
             benchmark = str(
-                (raw.get("benchmark_name") or raw.get("benchmark_display") or raw.get("benchmark_id", ""))
-                if raw else source.get("benchmark", "")
+                (raw.get("benchmark_display") or raw.get("benchmark_name") or raw.get("benchmark_id", ""))
+                if raw else source.get("benchmark_display") or source.get("benchmark", "")
             )
+            if raw and not raw.get("benchmark_display") and task_count and runs:
+                benchmark = f"{benchmark} — {task_count} task × {runs} runs"
             started = str(raw.get("datetime_run_started") or raw.get("run_started_at") or raw.get("recorded_at", "")) if raw else str(source.get("run_started_at") or source.get("run_started", ""))
             updated = str(raw.get("last_update") or raw.get("recorded_at", "")) if raw else str(source.get("last_update") or source.get("run_finished_at", ""))
-            elapsed = str(raw.get("elapsed", "")) if raw and raw.get("elapsed") else (fmt_eta(wall) if wall is not None else str(source.get("elapsed", "")))
+            elapsed = str(raw.get("elapsed", "")) if raw and raw.get("elapsed") else (fmt_eta(wall) if raw and wall is not None else "")
             run_index = to_int(raw.get("run", "")) if raw else None
             tok_s = to_float(raw.get("output_tps", "")) if raw else to_float(source.get("tps"))
-            cpu_pct = to_float(raw.get("avg_cpu_pct", "")) if raw else to_float(source.get("avg_cpu"))
-            gpu_pct = to_float(raw.get("avg_gpu_pct", "")) if raw else to_float(source.get("avg_gpu"))
-            vram_used = (to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else (to_float(source.get("used_vram_gb")) if planned else None)
-            # "vram_free_gb" is never written to the CSV by the sampler (it only
-            # records what it used, not the card's total capacity), so a raw
-            # lookup is always empty. Derive it instead: nvidia-smi's
-            # memory.used query already reflects *system-wide* GPU memory use
-            # (not just this process), so total - used is an accurate reading
-            # of what was actually free while this run executed. Falls back to
-            # a manual "vram_free_gb" CSV override if one is ever supplied.
-            vram_free_override = to_float(raw.get("vram_free_gb", "")) if raw else None
-            if vram_free_override is not None:
-                vram_free = vram_free_override
-            elif vram_used is not None:
-                total_vram_mb = gpu_total_vram_mb()
-                vram_free = max(0.0, total_vram_mb / 1024.0 - vram_used) if total_vram_mb else None
-            else:
-                vram_free = None
-            ram_used = (to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else (to_float(source.get("used_ram_gb")) if planned else None)
+            cpu_pct = to_float(raw.get("avg_cpu_pct", "")) if raw else None
+            gpu_pct = to_float(raw.get("avg_gpu_pct", "")) if raw else None
+            vram_used = (to_float(raw.get("avg_vram_used_mb")) or 0.0) / 1024.0 if raw and raw.get("avg_vram_used_mb") else None
+            # Free VRAM is only trustworthy when the sampler explicitly
+            # recorded it for this run. Never infer historical free memory
+            # from total capacity minus process/system usage.
+            vram_free = to_float(raw.get("vram_free_gb", "")) if raw else None
+            ram_used = (to_float(raw.get("avg_mem_pct")) or 0.0) / 100.0 * system_ram_gb if raw and raw.get("avg_mem_pct") else None
             result.append({
                 "benchmark": benchmark,
                 "status": status, "provider": grid_provider(backend, raw), "backend": backend, "model": model,
-                "run": run_index, "runs": runs, "samples": task_count,
+                "run": run_index, "runs": runs,
+                "samples": (str(raw.get("samples", "")).strip() or (f"{run_index}/{task_count * runs}" if raw and run_index else "")),
                 "datetime_run_started": fmt_clock_or_date(started, report_day),
                 "last_update": fmt_clock_or_date(updated, report_day), "elapsed": elapsed, "wall_seconds": wall,
                 "tok_s": tok_s, "cpu_percent": cpu_pct, "gpu_percent": gpu_pct,
@@ -4217,29 +4260,31 @@ body[data-theme="light"]{--bg:#f4f6fa;--panel:#ffffff;--panel-alt:#f0f3f8;--line
 body[data-theme="paper"]{--bg:#f7f3ea;--panel:#fffdf8;--panel-alt:#f1ebdd;--line:#e0d6bd;--text:#2c2417;--muted:#7a6d54;--accent:#a1662f;--header-bg:#efe4cd;--header-text:#2c2417}
 body[data-theme="terminal"]{--bg:#000000;--panel:#0a0f0a;--panel-alt:#0e150e;--line:#1f3b1f;--text:#39ff6a;--muted:#1f9d47;--accent:#39ff6a;--header-bg:#0a0f0a;--header-text:#39ff6a}
 body[data-theme="high-contrast"]{--bg:#000000;--panel:#0d0d0d;--panel-alt:#161616;--line:#ffee00;--text:#ffffff;--muted:#ffee00;--accent:#ffee00;--header-bg:#000000;--header-text:#ffee00}
+@media (prefers-color-scheme:light){body[data-theme="system"]{--bg:#f4f6fa;--panel:#ffffff;--panel-alt:#f0f3f8;--line:#d6dce6;--text:#12213a;--muted:#5c6b85;--accent:#2563eb;--header-bg:#e7edf7;--header-text:#12213a}}
+@media (prefers-color-scheme:dark){body[data-theme="system"]{--bg:#08111f;--panel:#10213a;--panel-alt:#122941;--line:#29425f;--text:#e8f0fa;--muted:#9eb1c9;--accent:#3b82f6;--header-bg:#152a46;--header-text:#f4f8ff}}
 *{box-sizing:border-box}
-body{margin:0;padding:22px;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",Arial,sans-serif;transition:background .2s,color .2s}
+body{margin:0;padding:14px;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",Arial,sans-serif;transition:background .2s,color .2s}
 body[data-theme="terminal"]{font-family:Consolas,"Cascadia Mono",monospace}
-header{padding:18px 22px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--panel)),var(--panel))}
+header{padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 18%,var(--panel)),var(--panel))}
 h1{margin:0 0 4px;font-size:23px;letter-spacing:.2px}
 .muted{color:var(--muted)}
-.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
-.kpi{padding:9px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);min-width:150px}
+.kpis{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.kpi{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);min-width:130px}
 .kpi b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:2px}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 8px}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0 5px}
 .toolbar input,.toolbar select,.toolbar button{padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel-alt);color:var(--text);font-size:12.5px}
 .toolbar button{cursor:pointer;transition:background .15s,transform .05s}
 .toolbar button:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
 .toolbar button:active{transform:translateY(1px)}
 .toolbar input{min-width:220px}
-#groupbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 14px;padding:8px 10px;border:1px dashed var(--line);border-radius:10px;background:var(--panel-alt);min-height:38px;transition:background .15s,border-color .15s}
+#groupbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 7px;padding:5px 8px;border:1px dashed var(--line);border-radius:8px;background:var(--panel-alt);min-height:30px;transition:background .15s,border-color .15s}
 #groupbar.dragover{background:color-mix(in srgb,var(--accent) 22%,var(--panel-alt));border-color:var(--accent)}
 #groupbar .hint{color:var(--muted);font-size:12px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px 4px 10px;border-radius:999px;background:var(--accent);color:#fff;font-size:12px;cursor:grab;user-select:none}
 .chip .x{cursor:pointer;opacity:.85;font-weight:700}
 .chip .x:hover{opacity:1}
 .chip.dragging{opacity:.4}
-#grid{height:calc(100vh - 250px);min-height:420px}
+#grid{height:calc(100vh - 190px);min-height:420px}
 .tabulator{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:12.5px}
 .tabulator .tabulator-header{background:var(--header-bg);color:var(--header-text);border-bottom:2px solid var(--accent)}
 .tabulator .tabulator-col{background:var(--header-bg)}
@@ -4248,7 +4293,7 @@ h1{margin:0 0 4px;font-size:23px;letter-spacing:.2px}
 .tabulator .tabulator-col.dragging-source{opacity:.5}
 .tabulator .tabulator-header-filter input,.tabulator .tabulator-header-filter select{width:100%;padding:4px 6px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text);font-size:11.5px}
 .tabulator .tabulator-header-filter input:focus,.tabulator .tabulator-header-filter select:focus{outline:2px solid var(--accent);outline-offset:1px}
-.tabulator .tabulator-header-filter{display:none}
+.tabulator .tabulator-header-filter{display:block}
 .tabulator .tabulator-header-filter.filter-visible{display:block}
 .tabulator .tabulator-col.filter-active .tabulator-col-title::after{content:' *';color:var(--accent);font-weight:900}
 .tabulator .tabulator-row{background:var(--panel);color:var(--text);border-bottom:1px solid var(--line)}
@@ -4281,15 +4326,22 @@ body[data-theme="light"] .tier-4,body[data-theme="paper"] .tier-4,body[data-them
 .compact .tabulator-col-title{font-size:10.5px}
 .tabulator-tooltip{max-width:520px;white-space:pre-wrap;word-break:break-word;font-family:Consolas,monospace;font-size:11.5px;background:var(--panel-alt)!important;color:var(--text)!important;border:1px solid var(--accent)!important;border-radius:8px!important;padding:8px 10px!important;box-shadow:0 6px 18px rgba(0,0,0,.35)}
 kbd{background:var(--panel-alt);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px;margin-top:8px}
+.chart{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.chart h2{font-size:12px;margin:0 0 6px;color:var(--muted)}
+.bar{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11px}.bar label{width:145px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar i{height:10px;background:var(--accent);border-radius:3px;min-width:2px}.bar em{font-style:normal;color:var(--muted);width:48px;text-align:right}
+.leader-row{display:grid;grid-template-columns:24px minmax(100px,1fr) 58px 68px;gap:6px;align-items:center;padding:3px 0;font-size:11px;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.leader-row:last-child{border-bottom:0}.leader-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.leader-row span,.leader-row em{text-align:right;font-style:normal}.leader-row .rank{color:var(--accent);text-align:left;font-weight:800}
+.scatter-svg{display:block;width:100%;height:190px}.scatter-axis{stroke:var(--line);stroke-width:1}.scatter-grid{stroke:color-mix(in srgb,var(--line) 45%,transparent);stroke-width:1;stroke-dasharray:3 4}.scatter-dot{fill:var(--accent);stroke:var(--panel);stroke-width:2}.scatter-label{fill:var(--muted);font:10px system-ui,sans-serif}.scatter-title{fill:var(--text);font:10px system-ui,sans-serif}
 """
 
     grid_js = """
 const DATA=__GRID_DATA__;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const numFmt=(v,d,suf)=>{if(v===null||v===undefined||v==='')return 'N/A';const n=Number(v);if(Number.isNaN(n))return 'N/A';return n.toFixed(d)+(suf||'');};
-const FIELD_TITLES={benchmark:'Benchmark',status:'Status',provider:'Provider',backend:'Backend',model:'Model',runs:'Runs',samples:'Tasks',datetime_run_started:'Started',last_update:'Updated',elapsed:'Elapsed',tok_s:'Tok/s',cpu_percent:'CPU',gpu_percent:'GPU',vram_used_gb:'VRAM used',vram_free_gb:'VRAM free',ram_gb:'RAM',system_errors:'Errors',heuristic_score:'Heuristic',rating_score:'Score',rating:'Suitability',launch_params:'Params',interpretation:'Interpretation'};
+const FIELD_TITLES={benchmark:'Benchmark',status:'Status',provider:'Provider',backend:'Backend',model:'Model',samples:'Samples',datetime_run_started:'Started',last_update:'Updated',elapsed:'Elapsed',tok_s:'Tok/s',cpu_percent:'CPU',gpu_percent:'GPU',vram_used_gb:'VRAM used',vram_free_gb:'VRAM free',ram_gb:'RAM',system_errors:'Errors',heuristic_score:'Heuristic',rating_score:'Score',rating:'Suitability',launch_params:'Params',interpretation:'Interpretation'};
 const statusFormatter=cell=>{const v=String(cell.getValue()??'');return '<span class="status status-'+esc(v)+'">'+esc(v)+'</span>';};
-const tierFormatter=(field,decimals,suffix)=>cell=>{const d=cell.getData();const tier=d[field+'_tier']??0;const v=numFmt(cell.getValue(),decimals,suffix);return '<span class="tier-'+tier+'">'+esc(v)+'</span>';};
+const tierFormatter=(field,decimals,suffix)=>cell=>{const raw=cell.getValue();if(raw===null||raw===undefined||raw==='')return '';const d=cell.getData();const tier=d[field+'_tier']??0;const v=numFmt(raw,decimals,suffix);return '<span class="tier-'+tier+'">'+esc(v)+'</span>';};
 const pctFormatter=cell=>numFmt(cell.getValue(),1,'%');
 const gbFormatter=cell=>numFmt(cell.getValue(),2,' GB');
 const tokFormatter=cell=>numFmt(cell.getValue(),1,' tok/s');
@@ -4302,8 +4354,7 @@ const columns=[
  {title:'Provider',field:'provider',headerFilter:'input',width:110},
  {title:'Backend',field:'backend',headerFilter:'input',width:100},
  {title:'Model',field:'model',headerFilter:'input',minWidth:170},
- {title:'Runs',field:'runs',headerFilter:'input',hozAlign:'center',width:64},
- {title:'Tasks',field:'samples',headerFilter:'input',hozAlign:'center',width:84},
+ {title:'Samples',field:'samples',headerFilter:'input',hozAlign:'center',width:84},
  {title:'Started',field:'datetime_run_started',headerFilter:'input',width:110},
  {title:'Updated',field:'last_update',headerFilter:'input',width:110},
  {title:'Elapsed',field:'elapsed',formatter:cell=>{const d=cell.getData();const tier=d.wall_seconds_tier??0;return '<span class="tier-'+tier+'">'+esc(cell.getValue()??'')+'</span>';},headerFilter:'input',hozAlign:'right',width:90},
@@ -4393,6 +4444,50 @@ const applySearch=()=>{
 };
 document.getElementById('search').oninput=applySearch;
 document.getElementById('theme').onchange=e=>{document.body.dataset.theme=e.target.value;};
+const renderBars=(id,field,suffix)=>{const box=document.getElementById(id);const rows=DATA.filter(r=>r.status==='done'&&Number.isFinite(Number(r[field]))).slice().sort((a,b)=>Number(b[field])-Number(a[field])).slice(0,10);if(!rows.length){box.innerHTML='<span class="muted">No completed measurements</span>';return;}const max=Math.max(...rows.map(r=>Number(r[field])),1);box.innerHTML=rows.map(r=>'<div class="bar"><label title="'+esc(r.model)+'">'+esc(r.model)+'</label><i style="width:'+Math.max(2,Math.round(Number(r[field])/max*100))+'%"></i><em>'+Number(r[field]).toFixed(1)+suffix+'</em></div>').join('');};
+const metric=value=>value===null||value===undefined||value===''?null:(Number.isFinite(Number(value))?Number(value):null);
+const aggregateModels=()=>{
+ const grouped=new Map();
+ DATA.filter(r=>r.status==='done').forEach(r=>{
+  const key=String(r.backend??'')+'\\u0000'+String(r.model??'');
+  if(!grouped.has(key))grouped.set(key,{model:String(r.model??''),backend:String(r.backend??''),score:0,scoreN:0,quality:0,qualityN:0,speed:0,speedN:0});
+  const item=grouped.get(key);
+  const score=metric(r.rating_score),quality=metric(r.heuristic_score),speed=metric(r.tok_s);
+  if(score!==null){item.score+=score;item.scoreN++;}
+  if(quality!==null){item.quality+=quality;item.qualityN++;}
+  if(speed!==null){item.speed+=speed;item.speedN++;}
+ });
+ return [...grouped.values()].map(item=>({
+  model:item.model,backend:item.backend,
+  score:item.scoreN?item.score/item.scoreN:(item.qualityN?item.quality/item.qualityN:0),
+  quality:item.qualityN?item.quality/item.qualityN:0,
+  speed:item.speedN?item.speed/item.speedN:0
+ })).filter(item=>item.model);
+};
+const renderOverall=()=>{
+ const box=document.getElementById('chart-overall');
+ const rows=aggregateModels().sort((a,b)=>b.score-a.score).slice(0,5);
+ if(!rows.length){box.innerHTML='<span class="muted">No completed measurements</span>';return;}
+ box.innerHTML=rows.map((r,index)=>'<div class="leader-row"><span class="rank">#'+(index+1)+'</span><b title="'+esc(r.backend+' · '+r.model)+'">'+esc(r.model)+'</b><span>'+r.score.toFixed(1)+'</span><em>'+r.speed.toFixed(1)+' tok/s</em></div>').join('');
+};
+const renderScatter=()=>{
+ const box=document.getElementById('chart-scatter');
+ const rows=aggregateModels().filter(r=>Number.isFinite(r.score)&&Number.isFinite(r.speed));
+ if(!rows.length){box.innerHTML='<span class="muted">No completed measurements</span>';return;}
+ const width=660,height=190,left=34,right=12,top=10,bottom=28;
+ const maxSpeed=Math.max(...rows.map(r=>r.speed),1);
+ const maxScore=Math.max(...rows.map(r=>r.score),100);
+ const x=value=>left+(width-left-right)*(value/maxSpeed);
+ const y=value=>top+(height-top-bottom)*(1-value/maxScore);
+ const grid=[0,.25,.5,.75,1].map(part=>'<line class="scatter-grid" x1="'+left+'" y1="'+y(maxScore*part)+'" x2="'+(width-right)+'" y2="'+y(maxScore*part)+'"/>').join('');
+ const points=rows.map(r=>{
+  const label=r.model.length>16?r.model.slice(0,15)+'…':r.model;
+  return '<g><circle class="scatter-dot" cx="'+x(r.speed).toFixed(1)+'" cy="'+y(r.score).toFixed(1)+'" r="5"><title>'+esc(r.backend+' · '+r.model+' · score '+r.score.toFixed(1)+' · '+r.speed.toFixed(1)+' tok/s')+'</title></circle><text class="scatter-title" x="'+(x(r.speed)+7).toFixed(1)+'" y="'+(y(r.score)+3).toFixed(1)+'">'+esc(label)+'</text></g>';
+ }).join('');
+ box.innerHTML='<svg class="scatter-svg" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Overall score versus throughput">'+grid+'<line class="scatter-axis" x1="'+left+'" y1="'+top+'" x2="'+left+'" y2="'+(height-bottom)+'"/><line class="scatter-axis" x1="'+left+'" y1="'+(height-bottom)+'" x2="'+(width-right)+'" y2="'+(height-bottom)+'"/>'+points+'<text class="scatter-label" x="2" y="12">Score</text><text class="scatter-label" x="'+(width-76)+'" y="'+(height-5)+'">Throughput →</text></svg>';
+};
+renderOverall();renderScatter();
+renderBars('chart-speed','tok_s',' tok/s');renderBars('chart-quality','heuristic_score','%');
 document.getElementById('reset').onclick=()=>{
  document.getElementById('search').value='';
  table.clearFilter(true);
@@ -4415,6 +4510,7 @@ document.getElementById('reset').onclick=()=>{
         "<input id=\"search\" placeholder=\"Filter all columns…\">"
         "<select id=\"theme\" title=\"Layout / color theme\">"
         "<option value=\"midnight\" selected>Midnight (dark)</option>"
+        "<option value=\"system\">System</option>"
         "<option value=\"slate\">Slate (dark)</option>"
         "<option value=\"dracula\">Dracula</option>"
         "<option value=\"nord\">Nord</option>"
@@ -4429,6 +4525,10 @@ document.getElementById('reset').onclick=()=>{
         "</div>"
         "<div id=\"groupbar\"><span class=\"hint\">Drag a column header here to group by it (drop another to add a second/third grouping level; drag chips to reorder).</span></div>"
         "<div id=\"grid\"></div>"
+        "<section class=\"charts\"><div class=\"chart\"><h2>Top 5 overall (average score · throughput)</h2><div id=\"chart-overall\"></div></div>"
+        "<div class=\"chart\"><h2>Overall score vs throughput</h2><div id=\"chart-scatter\"></div></div>"
+        "<div class=\"chart\"><h2>Top throughput (completed runs)</h2><div id=\"chart-speed\"></div></div>"
+        "<div class=\"chart\"><h2>Top heuristic quality (completed runs)</h2><div id=\"chart-quality\"></div></div></section>"
         f"<script src=\"{html.escape(tabulator_rel)}/tabulator.min.js\"></script>"
         f"<script>{grid_js.replace('__GRID_DATA__', grid_data)}</script>"
         "</body></html>"
@@ -4691,7 +4791,11 @@ def main() -> int:
                                 if ("ollama", model, str(case["id"]), run_id) in completed_keys:
                                     continue
                                 print(f"[ollama] {model} | {case['id']} | run {run_id}")
-                                result = run_ollama_case(model, case, run_id, args)
+                                try:
+                                    result = run_ollama_case(model, case, run_id, args)
+                                except BenchmarkControlRequested:
+                                    print("[STOP] Benchmark control interrupted Ollama cleanly.", flush=True)
+                                    return 130
                                 stamp_launch_metadata(result, args, "ollama")
                                 result.local_model_startup_sec = startup_sec
                                 result.llm_size_bytes = ollama_model_size_bytes(model)

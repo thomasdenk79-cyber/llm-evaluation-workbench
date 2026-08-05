@@ -1,4 +1,4 @@
-"""Persist the highest declared context length for every local Ollama model."""
+"""Persist a safe operating context for every local Ollama model."""
 
 from __future__ import annotations
 
@@ -82,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
         / "ollama-modelfiles",
     )
     parser.add_argument("--model", action="append", dest="models")
+    parser.add_argument(
+        "--max-context",
+        type=int,
+        help="Cap the operating context; native context remains the default when omitted.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -94,6 +99,8 @@ def main() -> int:
         raise ValueError("Ollama /api/tags returned an invalid models list")
 
     requested = set(args.models or [])
+    if args.max_context is not None and args.max_context <= 0:
+        raise ValueError("--max-context must be a positive integer")
     found: set[str] = set()
     changed = 0
     planned = 0
@@ -109,7 +116,12 @@ def main() -> int:
         details = request_json(f"{base_url}/api/show", {"model": name})
         declared = native_context(details.get("model_info"))
         configured = parse_num_ctx(details.get("parameters"))
-        target = max(declared, configured or 0)
+        native_target = max(declared, configured or 0)
+        target = (
+            min(native_target, args.max_context)
+            if args.max_context is not None
+            else native_target
+        )
         if configured == target:
             print(f"current  {name}: {target}")
             continue

@@ -320,6 +320,8 @@ def _build_gate_exception_sample(
         model_load_seconds=None,
         orchestrator_cpu_time_seconds=None,
         model_cpu_time_seconds=attempt.resource_stats.model_process_cpu_time_seconds if attempt is not None else None,
+        io_read=attempt.resource_stats.io_read if attempt is not None else None,
+        io_write=attempt.resource_stats.io_write if attempt is not None else None,
     )
 
 
@@ -656,6 +658,8 @@ def run_ollama_connect_gate(
             model_load_seconds=ollama_client.ns_to_seconds(generate_result.load_duration_ns) if generate_result else None,
             orchestrator_cpu_time_seconds=orchestrator_cpu_time_seconds,
             model_cpu_time_seconds=attempt.resource_stats.model_process_cpu_time_seconds,
+            io_read=attempt.resource_stats.io_read,
+            io_write=attempt.resource_stats.io_write,
         )
     except Exception as exc:  # noqa: BLE001 -- gate-boundary safety net, see module docstring.
         sample = _build_gate_exception_sample(

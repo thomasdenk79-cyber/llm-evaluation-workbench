@@ -26,7 +26,7 @@ models = [
   "codestral:latest",
   "devstral-small-2:24b",
 ]
-ollama_url = "http://127.0.0.1:11434"
+ollama_url = "http://127.0.0.1:11434/api/generate"
 runs = 1
 timeout_sec = 900
 detail_csv = "benchmark_results/clean-local-campaign/unified_benchmark_detail.csv"

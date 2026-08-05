@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-05 — Ollama inventory, medium rerun and top-seven gate
+
+- Corrected the resumable campaign URL from the Ollama base endpoint to the
+  actual `/api/generate` endpoint; the complete 19-model inventory completed
+  without connection-reset errors.
+- Repeated every installed candidate three times using the controlled 32k
+  context, 16-thread profile. Results and launch provenance are stored in
+  `benchmark_results\clean-local-campaign\top20_medium_detail_run_20260805_031105.csv`.
+- Ran the seven highest-scoring medium candidates through the deterministic
+  executable coding gate. Results are kept separately in
+  `benchmark_results\clean-local-campaign\top7_hard\top7_mini_gate.csv`;
+  gate failures are not silently converted into performance scores.
+- Completed the seven-model upstream and ik CUDA GGUF matrix. Upstream
+  `gpt-oss-20b` reached 77.65 Tok/s; ik `deepseek-coder-v2-16b` was the
+  strongest fork row at 21.43 Tok/s. GPU utilization and throughput diverged
+  materially, so utilization is retained as telemetry rather than a target.
+
 ## 2026-08-05 — Clean benchmark restart and launch provenance
 
 - Reset generated benchmark output before the next controlled comparison;

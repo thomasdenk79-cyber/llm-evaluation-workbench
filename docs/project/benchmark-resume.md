@@ -54,6 +54,55 @@ upstream-llama.cpp and ik_llama.cpp. Only the launch backend/profile changes.
 For llama.cpp runs, pass repeated `--llama-model NAME=GGUF` options and the
 corresponding server executable.
 
+## Clean inventory and medium rerun — 2026-08-05
+
+The Ollama endpoint was corrected to `/api/generate`; the complete controlled
+inventory then finished without transport errors. The 19 installed candidates
+were repeated three times with the same 32k/16-thread profile. The strongest
+medium results were:
+
+| Model | Overall | Quality | Tok/s | GPU avg | VRAM avg |
+|---|---:|---:|---:|---:|---:|
+| deepseek-r1:8b | 48.01 | 34.53 | 64.78 | 74.2% | 7.30 GiB |
+| gpt-oss:20b | 47.61 | 33.60 | 41.85 | 31.4% | 9.18 GiB |
+| phi4-mini:3.8b-q4_K_M | 38.69 | 7.47 | 108.51 | 51.3% | 4.82 GiB |
+| llama3.1:8b | 35.54 | 16.80 | 68.79 | 62.0% | 6.66 GiB |
+| qwen3-coder:30b | 33.87 | 5.60 | 31.65 | 21.9% | 9.38 GiB |
+| kat-coder-v2.5:dev | 32.83 | 8.40 | 43.25 | 29.0% | 9.45 GiB |
+| rnj-1:8b | 32.32 | 13.07 | 61.71 | 73.4% | 7.17 GiB |
+
+Source: `benchmark_results/clean-local-campaign/top20_medium_detail_run_20260805_031105.csv`.
+The score is a screening heuristic, not a complete coding-quality judgment.
+
+The top-seven executable coding gate is stored at
+`benchmark_results/clean-local-campaign/top7_hard/top7_mini_gate.csv`.
+Codestral, RNJ-1 and Qwen2.5 passed all ten deterministic checks; DeepSeek-R1,
+GPT-OSS and KAT did not return the required fenced Python response; Llama 3.1
+passed 9/10. This gate is intentionally reported separately from the
+performance ranking.
+
+## GGUF backend matrix — 2026-08-05
+
+Seven compatible GGUFs were run once through upstream llama.cpp and the clean
+ik CUDA build. The exported Qwen-27B file was excluded because neither server
+could become ready with it. The web-grid screen shows the backend tradeoff:
+
+| Backend | Best model | Overall | Tok/s | GPU avg | Result |
+|---|---|---:|---:|---:|---|
+| Upstream llama.cpp | gpt-oss-20b | 57.57 | 77.65 | 84.8% | fastest valid upstream row |
+| Upstream llama.cpp | deepseek-coder-v2-16b | 31.32 | 36.07 | 69.9% | valid |
+| ik_llama.cpp | deepseek-coder-v2-16b | 42.33 | 21.43 | 31.1% | best ik screen row |
+| ik_llama.cpp | qwen3.6-35b-q4 | 34.80 | 19.05 | 35.5% | valid |
+
+Upstream KAT/Qwen rows used nearly full VRAM and reached about 97–99% GPU
+utilization but were only 3–4 Tok/s. The ik hybrid profile used about 31–36%
+GPU and delivered 13–22 Tok/s on the same class of models. This confirms that
+GPU utilization is diagnostic telemetry, not an optimization target.
+
+Artifacts:
+`upstream_matrix_detail_run_20260805_035226.csv` and
+`ik_matrix_detail_run_20260805_040436.csv`.
+
 ## Controlled local profile
 
 For this P16 Gen 2 / RTX 3500 Ada, use:

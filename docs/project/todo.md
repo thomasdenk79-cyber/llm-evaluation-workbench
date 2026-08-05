@@ -14,8 +14,12 @@ updated: 2026-08-04T02:30:00+02:00
       (`benchmark-v2.1`).
 - [x] Document RTX 3500 Ada VRAM/offload rules and ik_llama.cpp CUDA Release
       build procedure in the operations runbook.
-- [ ] Run the clean Qwen/KAT comparison over Ollama, upstream llama.cpp and
-      ik_llama.cpp, then publish the grouped/filterable HTML report.
+- [x] Run the clean Ollama inventory and three-repeat medium rerun; publish
+      the grouped/filterable HTML report and preserve launch parameters.
+- [x] Run the executable top-seven coding gate and record pass/fail reasons.
+- [x] Complete the equivalent upstream and ik matrices for the seven
+      compatible installable GGUFs; the exported Qwen-27B file remains
+      explicitly excluded as not server-compatible.
 
 ## Aktueller Zwischenstand — 2026-08-03 18:35
 
@@ -91,7 +95,7 @@ Agent-Helper-Track. Detailanforderungen stehen in
       32k-Coding-Cap; die neue Probe ist deutlich besser verteilt, aber
       mit 3,23 Generate-Tok/s weiterhin kein Daily-Runner-Kandidat.
 - [x] Laguna XS 2.1 Q4, Q5 und Q6 testen.
-- [ ] Qualität, Stabilität, Zeit bis zum akzeptierten Ergebnis,
+- [x] Qualität, Stabilität, Zeit bis zum akzeptierten Ergebnis,
       Korrekturschleifen, TPS und Ressourcen vergleichen.
 - [ ] Nicht passende oder instabile Modelle sichtbar ausschließen; hohe
       Geschwindigkeit ist kein Ersatz für Qualität.

@@ -7,6 +7,18 @@
 
 ### Stand: 2026-08-05 — Clean benchmark baseline and launch provenance
 
+- The Ollama campaign endpoint is `http://127.0.0.1:11434/api/generate`;
+  using the base URL for generation causes HTTP 405 and invalidates the run.
+- The 19-model clean Ollama inventory and three-repeat medium rerun completed
+  on 2026-08-05. The authoritative medium artifact is
+  `benchmark_results\clean-local-campaign\top20_medium_detail_run_20260805_031105.csv`.
+- The top-seven executable coding gate is separate evidence at
+  `benchmark_results\clean-local-campaign\top7_hard\top7_mini_gate.csv`.
+- The seven-model compatible GGUF matrix completed for upstream and ik:
+  `upstream_matrix_detail_run_20260805_035226.csv` and
+  `ik_matrix_detail_run_20260805_040436.csv`. The exported Qwen-27B GGUF
+  remains excluded because both servers failed readiness.
+
 - Generated benchmark output was reset so the next campaign starts with an
   empty `benchmark_results` directory; source runners and tests were retained.
 - The migration runner now persists `launch_profile`, `server_executable`,

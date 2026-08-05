@@ -2,10 +2,196 @@
 title: "LLM Evaluation Workbench - Canonical TODO"
 status: active
 canonical: true
-updated: 2026-08-05T13:30:00+02:00
+updated: 2026-08-05T15:30:00+02:00
 ---
 
 # Offene Arbeit
+
+## Tabulator report rewrite + Textual TUI/web control plane — 2026-08-05 (Claude Sonnet 5, GitHub Copilot CLI)
+
+Full requirements: `docs/project/requirements.md`. Architecture/concept:
+`docs/project/tui-web-architecture.md`.
+
+### Done
+
+- [x] `docs/project/benchmark_report.html` (and mirrored
+      `benchmark_live_status.html`) fully rewritten: readable formatted
+      numeric fields (`tok_s`/`cpu_percent`/`gpu_percent`/VRAM/RAM all via
+      `to_float()`), removed the baked-in "— N task × M runs" name suffix
+      (now separate `runs`/`samples`/`run` fields), removed `quality_score`
+      entirely (not produced by this pipeline; heuristic score only),
+      de-duplicated `rating` (short tag) vs `interpretation` (distinct,
+      numbers-backed sentence), replaced the broken `<details>` params
+      expander with a truncated `.params-preview` cell plus a native
+      Tabulator hover tooltip showing pretty-printed JSON, switched to
+      `fitDataTable` layout for a compact grid, added native
+      drag-and-drop multi-column grouping (chips, reorderable), added 10
+      selectable CSS themes (midnight/slate/dracula/nord/solarized ×2/
+      light/paper/terminal/high-contrast), added status pill colors
+      (done=green, error=red, warning=orange, scheduled=gray,
+      running=blue) and a 6-tier violet→red→orange→yellow→blue→green
+      color scale on `heuristic_score`/`rating_score`/elapsed (inverted
+      for "lower is better"), and hover/mouseover polish throughout.
+  - Verified via jsdom (headless Edge screenshot is blocked by system
+    policy: "Headless mode is disallowed by the system admin."): 71 rows
+    load through the real Tabulator API, all 6 tier classes present in
+    the DOM, status pill classes correct, params tooltip returns valid
+    pretty JSON, theme switch updates `data-theme`, drag-built grouping
+    calls `setGroupBy` and renders group rows, global search and header
+    filters both filter the row count correctly, and the reset button
+    clears both.
+  - Regenerated in place from the real production source
+    (`benchmark_results/clean-local-campaign/complete-report-source/`,
+    71 rows — the actual folder used to produce today's committed
+    report; `.master_runs` only holds 19-row partial snapshots).
+  - **Known, deliberately unfixed data-source caveat**: every one of the
+    71 rows still shows benchmark name "Standalone 50k web grid demo".
+    This is *not* a display bug — `clean-local-campaign.toml` really only
+    configures that one fixture (`benchmarks/web-grid-demo-v1.json`) for
+    this campaign. If the user expected a different/second benchmark to
+    appear (e.g. `top7_hard`/SWE suites), those live in separate CSVs
+    that were never merged into this unified report — flag to user,
+    do not silently invent a fix.
+- [x] `docs/project/tui-web-architecture.md` — concept/architecture for
+      the much larger follow-up request (Textual TUI, embedded web
+      control plane, wildcard campaign matrix, VRAM-headroom tuning,
+      parameter catalog, leaderboard/charts, backup/restore).
+- [x] `docs/project/requirements.md` — binding requirements spec for the
+      same follow-up request, written from the user's verbatim asks.
+- [x] `scripts/llm_bench_tui.py` — new Textual TUI: Dashboard (status +
+      Start/Pause/Resume/Stop wired to the *existing*
+      `pause.ini`/`stop.ini`/`.benchmark_master.pid` protocol in
+      `run_benchmark.py`, never a new one), Config (load/edit/save any
+      `config/*.toml`, "reset tuning knobs to defaults" behind a confirm
+      switch, never touches the curated `models`/`suites` list), Models &
+      backends (Ollama tags with size, llama.cpp GGUF registry with
+      on-disk validation, pull/register/backup-inventory actions),
+      Results/report (reads the *same* embedded `DATA` JSON the HTML
+      Tabulator grid renders — cannot drift from it — with the same
+      status/tier colors, a filter box, and Open-in-browser /
+      Open-in-Excel actions), Leaderboard (Top-5 by average
+      `heuristic_score` plus an ASCII bar chart; no new charting
+      dependency added — see architecture doc for the `plotext` upgrade
+      path). Verified headless via Textual's `run_test()` pilot: all 5
+      tabs render, results load 76 rows (71 completed + scheduled/live
+      rows) and filter correctly, leaderboard computes 5 rows, config
+      loads real TOML values, models screen lists 34 real rows (Ollama +
+      GGUF registry) without error.
+- [x] `run_benchmark.py`: invoking with **no CLI arguments in an
+      interactive terminal** now launches the Textual TUI instead of the
+      old Tkinter dialog; falls back to the previous behavior if Textual
+      import fails for any reason. Non-interactive/scripted invocations
+      (every documented usage in `docs/operations/runbook.md` passes
+      explicit flags) are unaffected.
+- [x] `requirements.txt`: added `textual>=0.60` (already present in the
+      environment; now declared).
+- [x] Re-ran `scripts/test_docs.py` (6/6) and `mkdocs build --strict`
+      (clean) after all of the above — no regressions.
+
+### Open (see `tui-web-architecture.md` "Backlog" for full detail/order)
+
+- [x] `scripts/bench_web_server.py` embedded web control plane (stdlib
+      `http.server.ThreadingHTTPServer`, mirrors `taskvision-grid-lab`'s
+      compression negotiation: `none`/`gzip`/`br`/`zstd` via `?compression=`
+      query param or `Accept-Encoding`). Routes: `GET /` (Tabulator report
+      page), `GET /api/data` (compressed embedded JSON), `GET /api/status`,
+      `GET /vendor/*` (static, path-traversal-guarded), `POST
+      /api/control/{pause,resume,stop}` (reuses `run_benchmark.py`'s
+      existing `pause.ini`/`stop.ini` file protocol — no new control
+      mechanism invented). Verified live: started on port 8766 (port 8765
+      was blocked by an unrelated stale listener, not a code bug), curl
+      confirmed status JSON, all 4 compression schemes, HTML page, vendor
+      JS file, and pause/resume file creation/removal all work correctly.
+- [x] Wildcard campaign matrix (`[[matrix]]` TOML shape: fnmatch patterns
+      for `models` × `benchmarks` × `backend`) — implemented in
+      `run_benchmark.py`: `_load_matrix()` reads the `[[matrix]]` table,
+      `_available_benchmark_files()` discovers fixture stems under
+      `benchmarks/`/`scripts/benchmarks/`, `expand_matrix()` resolves each
+      entry into concrete `{backend, models, benchmark_stem,
+      benchmark_file}` groups (wildcard models resolved live via
+      `_ollama_models()` for `ollama`, against the GGUF registry for
+      `llama_cpp`; a failed/unreachable Ollama tag lookup now degrades
+      gracefully to an empty-models group with a warning instead of
+      crashing the whole run). Wired into `main()` (`--show-matrix` prints
+      a dry-run expansion table and exits 0 without running anything) and
+      into `_main_locked()` via a new `_main_locked_matrix()` that mirrors
+      the legacy per-suite loop's pause/stop/dashboard control flow but
+      plans one runner invocation per expanded group, skipping groups
+      whose models or benchmark fixture didn't resolve. Verified with a
+      temp two-entry `[[matrix]]` test config (one literal-model entry,
+      one wildcard entry against an intentionally-unreachable Ollama URL)
+      — `--show-matrix` correctly expanded to 6 groups and printed a
+      graceful warning for the unresolvable wildcard group instead of
+      crashing; a config with no `[[matrix]]` table still prints "nothing
+      to expand" and legacy `suites`-based planning is untouched.
+- [x] **"VRAM free" column showed `n/a` for every row** — root cause: the
+      `BenchResult.vram_free_gb` dataclass field was declared but *never
+      assigned anywhere* in the sampler/runner code; `grid_rows()` only
+      ever read this always-empty field back out of the raw CSV row. Fix:
+      added a cached `gpu_total_vram_mb()` helper (`nvidia-smi
+      --query-gpu=memory.total`, queried once per process and cached,
+      since total VRAM capacity is static hardware) and changed
+      `grid_rows()` to derive `vram_free_gb = total_vram_gb -
+      avg_vram_used_gb` whenever `avg_vram_used_mb` was actually sampled
+      (nvidia-smi's `memory.used` query already reflects system-wide GPU
+      memory use, not just this process, so this is an accurate "free
+      during this run" reading, not an approximation). A manual
+      `vram_free_gb` CSV override still wins if one is ever supplied.
+      Verified: regenerated the report from the real 71-row production
+      CSV (`benchmark_results/clean-local-campaign/complete-report-source/`)
+      and confirmed via jsdom that `vram_free_gb`/`vram_used_gb` cells now
+      sum to ≈ the card's real 12 GB capacity (e.g. 7.02 GB used + 4.97 GB
+      free) instead of showing `n/a`; only 1/71 rows (the row with a
+      recorded error and no GPU samples) legitimately still shows no value.
+      **Important regeneration gotcha discovered while fixing this**:
+      `update_markdown_report(results_dir, report_path, args)` expects
+      `report_path` to be the **`.md`** report path (default
+      `docs/project/benchmark_report.md`) — it derives the real Tabulator
+      `.html` grid via `report_path[:-3] + ".html"` and the legacy
+      "Detailed Live Status" plain table via
+      `report_path.replace(".md", "_details.md")`. Calling it with an
+      `.html` path directly (as done once, by mistake, this session)
+      corrupts everything: the derived `.html` name becomes
+      `..._report.html.html` (never seen) while the plain "Detailed Live
+      Status" markdown content gets written straight into whatever path
+      you passed as `report_path` — silently overwriting the real grid
+      HTML with an unrelated, all-"scheduled"-status plain table. Always
+      pass a `.md` path (or omit `--report-file` to use the default).
+      This mistake was caught before being committed (git working tree
+      diffs made it obvious) and fully reverted via `git restore` before
+      redoing the regeneration correctly. This also revealed that the
+      *previously committed* `docs/project/benchmark_report.html` was
+      stale (missing `runs`, the 6-tier fields, and still containing
+      `quality_score`/the "— N task × M runs" name-suffix bug) — i.e. an
+      earlier session's report rewrite was verified but never actually
+      saved/committed. The regeneration performed here is therefore the
+      first time the fully-fixed grid (from earlier this session) has
+      actually landed in the repo's working tree, now with the VRAM-free
+      fix included on top. Re-verified `scripts/test_docs.py` (6/6) and
+      `mkdocs build --strict` (clean) after copying the regenerated
+      artifacts into `docs/project/`.
+- [ ] LLM parameter catalog (ollama vs llama.cpp params, descriptions,
+      optimal defaults, reset-to-default, "suggest best from history").
+- [ ] VRAM headroom % config + auto-reconfigure launch params across all
+      models — deliberately deferred until it can be validated read-only
+      against real measured VRAM curves first.
+- [ ] Top-5 leaderboard + score-vs-performance scatter chart *in the HTML
+      report* (the TUI has a basic ASCII version now; HTML does not yet).
+- [ ] Backup/restore automation beyond the TUI's current "backup
+      inventory to JSON" button: no restore path, no fork
+      build/recompile automation, no `install.md` fallback generator
+      yet.
+- [ ] Generic Textual → HTML converter as its own repository —
+      deliberately deferred (see architecture doc §3: wait for a second
+      real consumer).
+- [ ] `docs/project/benchmark_run_summary.csv` appeared as a new,
+      untracked artifact of `update_markdown_report()` during this
+      session's regeneration — confirm whether it should be
+      `.gitignore`d or committed as a tracked report artifact.
+- [ ] Consider declaring `brotli`/`zstandard` in `requirements.txt`
+      alongside `textual` — `scripts/bench_web_server.py` now imports
+      both for compression, currently only implicitly available in the
+      environment.
 
 ## Handover für den nächsten Agenten — 2026-08-05
 
@@ -16,6 +202,15 @@ updated: 2026-08-05T13:30:00+02:00
 - [ ] Open the HTML report and verify Tabulator behavior in the browser:
       visible rows, column filters, multi-status filtering, sorting,
       multi-column grouping, movable columns and parameter expanders.
+      Static verification done 2026-08-05 (Claude Sonnet 5, GitHub Copilot
+      CLI, no browser tool available in this session): `vendor/tabulator/`
+      files present with expected sizes, `DATA` block in
+      `benchmark_report.html` parses as valid JSON (71 rows, 23 columns
+      matching the defined Tabulator column set), `new Tabulator(...)`
+      wiring present with `headerFilter`, `movableColumns`,
+      `groupStartOpen` and a toolbar status/search filter. Actual
+      in-browser interaction (click-through of filters/grouping/sorting)
+      is still open and needs a human or browser-capable agent.
 - [ ] Add measured `vram_free_gb` to all future telemetry rows; do not
       estimate historical free VRAM.
 - [ ] Re-run the top finalists with the hard suites before declaring a

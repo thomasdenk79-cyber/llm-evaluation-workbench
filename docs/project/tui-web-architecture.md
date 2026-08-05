@@ -132,6 +132,8 @@ posture:
   an internal, potentially-networked listener).
 - Binds to `127.0.0.1` by default; a `--host` override is opt-in and logs
   a loud warning, mirroring the "no secrets, no silent exposure" posture.
+- Uses port `8766` by default; port `8765` is reserved by the separate
+  AutoInstaller/taskvision local service on this workstation.
 
 ### 3. Generic "Textual → HTML" converter
 

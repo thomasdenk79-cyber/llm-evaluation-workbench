@@ -16,7 +16,7 @@ negotiated per request via a ``?compression=`` query parameter or the
 
 Usage::
 
-    python scripts\\bench_web_server.py                  # 127.0.0.1:8765
+    python scripts\\bench_web_server.py                  # 127.0.0.1:8766
     python scripts\\bench_web_server.py --port 9000
     python scripts\\bench_web_server.py --compression zstd
 
@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1",
                          help="Bind address. Non-localhost prints a loud warning (default: 127.0.0.1).")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--compression", choices=sorted(SUPPORTED_COMPRESSIONS), default=DEFAULT_COMPRESSION,
                          help="Default compression when a request doesn't specify ?compression= (default: none).")
     return parser

@@ -1,0 +1,46 @@
+# Resumable clean local campaign for the RTX 3500 Ada 12-GB profile.
+# Run one backend at a time; the local-model lease and one-slot policy are
+# intentional. Models too large for controlled VRAM fitting are listed in
+# docs/project/benchmark-resume.md as deferred, not silently mixed in.
+[benchmark]
+suites = "migration"
+backend = "ollama"
+models = [
+  "kat-coder-v2.5:dev",
+  "qwen3.6:27b-q4_K_M",
+  "qwen3.6:35b-a3b-q4_K_M",
+  "qwen3.6:35b-a3b-q5_K_M",
+  "qwen3-coder:30b",
+  "deepseek-coder-v2:16b",
+  "gpt-oss:20b",
+  "laguna-xs-2.1:q4_K_M",
+  "laguna-xs-2.1:q5_K_M",
+  "laguna-xs-2.1:q6_K",
+  "glm-4.7-flash:q4_K_M",
+  "phi4-mini:3.8b-q4_K_M",
+  "llama3.1:8b",
+  "deepseek-r1:8b",
+  "rnj-1:8b",
+  "qwen2.5:32b",
+  "qwen2.5-coder:32b-instruct-q4_K_M",
+  "codestral:latest",
+  "devstral-small-2:24b",
+]
+ollama_url = "http://127.0.0.1:11434"
+runs = 1
+timeout_sec = 900
+detail_csv = "benchmark_results/clean-local-campaign/unified_benchmark_detail.csv"
+run = "resume"
+resume = "auto"
+pause_file = "pause.ini"
+stop_file = "stop.ini"
+lock_file = ".benchmark_master.pid"
+runner_args = [
+  "--benchmark-file", "benchmarks/web-grid-demo-v1.json",
+  "--ctx-size", "32768",
+  "--threads", "16",
+  "--llama-ngl", "100",
+  "--llama-batch-size", "512",
+  "--llama-ubatch-size", "128",
+  "--max-tokens", "256",
+]

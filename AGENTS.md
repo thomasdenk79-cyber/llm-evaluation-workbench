@@ -5,10 +5,74 @@
 - **OVERRIDES:** local benchmark safety, reporting, reproducibility, and lifecycle rules below
 - **SCOPE:** this repository
 
+### Stand: 2026-08-05 — Clean benchmark baseline and launch provenance
+
+- Generated benchmark output was reset so the next campaign starts with an
+  empty `benchmark_results` directory; source runners and tests were retained.
+- The migration runner now persists `launch_profile`, `server_executable`,
+  `model_path` and deterministic `launch_params` JSON in detail and summary
+  CSVs. Schema version is `benchmark-v2.1`.
+- For the RTX 3500 Ada 12-GB profile, `fit` with a 1664 MiB margin, Q8 K/V
+  cache, Flash Attention, 16 threads, 512/128 batch sizes and 32768 context
+  is the controlled starting point. `exps=CPU` and blind `n-cpu-moe` are
+  diagnostic profiles, not defaults.
+- The next clean comparison must use one local model at a time and record
+  GPU/VRAM/PCIe telemetry; GPU utilization above 90% is a diagnostic signal,
+  not a correctness or throughput target.
+
+### Stand: 2026-08-04 — Rating und Agententauglichkeit
+
+- Der Legacy-SWE-Report bewertet Läufe nicht mehr nur nach Qualität:
+  `Rating` kombiniert normalisierte Qualität, Elapsed-Performance und
+  Zuverlässigkeit; `Agent suitability` bewertet zusätzlich die erwartete
+  Zeit bis zum erfolgreichen Ergebnis und bleibt eine getrennte
+  Routing-Einschätzung.
+
 > Mandatory before work: read `C:\GIT\user-memory\profile.md`,
 > `C:\GIT\agent-memory\INDEX.md`, `C:\GIT\standards\AGENTS.md`, then this file.
 
 ## Aktueller Stand
+
+### Stand: 2026-08-03 — Daily-Coder-Mini-Gates abgeschlossen
+
+- `daily-coder-20260803` testete zehn explizite lokale Kandidaten seriell
+  mit Connect- und ausführbarem Mini-Coding-Gate. Die Daten liegen unter
+  `benchmark_results\agent-helper\daily-coder-20260803\`; lokale und
+  zusammengeführte HTML-Berichte wurden nach jedem Gate aktualisiert.
+- Neun Kandidaten bestanden beide Gates. Schnellste akzeptierte
+  Mini-Coding-Proben: `qwen3.6:35b-a3b-q4_K_M` (`35,176 s`, `28,73 Tok/s`)
+  und `deepseek-coder-v2:16b` (`36,530 s`, `20,91 Tok/s`), danach
+  `qwen3-coder:30b` (`78,892 s`, `5,75 Tok/s`).
+- `devstral-small-2:24b` ist `not-usable`: Connect bestanden, aber
+  Mini-Coding-Gate `OLLAMA_GENERATE_FAILED`; das harte Gate schließt es
+  aus der Rangfolge aus.
+- Alle akzeptierten Modelle bleiben `gate-passed-provisional`/
+  `evidence_stage=gate_only`. Keine Daily-Coder-Empfehlung vor breiter
+  Coding-, Reviewer- und Multi-Turn-Evidenz.
+
+### Stand: 2026-08-03 — Fork-/Report-Integration und CUDA-Blocker
+
+- Der echte `ikawrakow/ik_llama.cpp`-Fork ist unter
+  `C:\Users\z000g9hu\llama.cpp-ik` auf Commit `cb9147f` vorhanden. Ein
+  CUDA-13.2-Build mit `llama-bench.exe` und `llama-server.exe` liegt unter
+  `build-cuda-v132-local\bin\Release`.
+- Einen ersten scheinbar erfolgreichen Fork-Lauf nicht verwenden: Er lief
+  wegen `CUDAToolkit_NVCC_EXECUTABLE-NOTFOUND` CPU-only (`cuda=false`,
+  `gpu_blas=false`). CPU- oder Fallback-Werte dürfen nie als GPU-Evidenz
+  in Leaderboard, Empfehlung oder Bericht erscheinen.
+- Aktuell meldet die RTX 3500 Ada per `nvidia-smi` den Studio-Treiber
+  `596.86`/CUDA 13.2, doch die direkte CUDA-Driver-API liefert
+  `cuInit=100`, `deviceCount=0`. Nach Abschluss von CUDA/Nsight ist ein
+  Windows-Neustart Pflicht, dann zuerst CUDA sichtbar machen und erst
+  danach den Fork-Hybridlauf starten.
+- Reporting-Vertrag: `benchmark_report.html`/`.md` plus
+  `benchmark_run_summary.csv` ist die kompakte Historie (eine Zeile je
+  abgeschlossenem Lauf). `benchmark_live_status.html`/`.md` ist die breite
+  Live-Sicht mit geplanter Reihenfolge, Fortschritt und ETA und wird nach
+  jeder gespeicherten Probe aktualisiert.
+- Der Fork misst zunächst nur PP/TG-Durchsatz. Ein Daily-Coder darf erst
+  nach denselben Coding-/Korrektheitsgates wie die Ollama-Kandidaten
+  empfohlen werden.
 
 ### Stand: 2026-08-02 — Gemeinsame lokale Modell-Lease (kein Live-Modell)
 
@@ -759,6 +823,13 @@ python .\run_agent_helper_campaign.py mini-gate-run `
 - Raw rows preserve timing, token, score, CPU, RAM, GPU, VRAM, lifecycle, preview, and error fields.
 - Final runs append to `benchmark_results\migration_llm_bench_history.csv`.
 - Resume must skip already successful `backend+model+case+run` samples and retry missing/error samples.
+- Every benchmark update generates three linked summary artefacts from the same aggregated rows:
+  `benchmark_report.html`/`.md` and `benchmark_run_summary.csv` contain the compact
+  one-row-per-run overview; `benchmark_live_status.html`/`.md` contains the wider
+  operational view with planning, progress, and ETA.
+  The compact overview fields are:
+  `Date/time`, `Backend`, `Model`, `Benchmark name`, `Samples x/n`, average GPU/CPU,
+  VRAM/RAM, score, errors, tokens/s, elapsed time, and rating.
 - The compact live report contains exactly the planned model rows; case/run detail belongs in the details report.
 - Changing output schemas or visible metrics requires report, runbook, and changelog updates in the same change.
 

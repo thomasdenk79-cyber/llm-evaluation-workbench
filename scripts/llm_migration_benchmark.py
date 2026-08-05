@@ -31,6 +31,24 @@ BENCHMARK_LIBRARY_DIR = "benchmarks"
 DEFAULT_BENCHMARK_ID = "ora-pg-py-33"
 BENCHMARK_SCORING_MODE = "classic"  # classic | swe_lite
 BENCHMARK_SWE_PASS_THRESHOLD = 85.0
+CSV_SCHEMA_VERSION = "benchmark-v2.1"
+
+DETAIL_CSV_COLUMNS = [
+    "benchmark_run_id", "schema_version", "benchmark_name", "benchmark_spec_version",
+    "benchmark_script_file", "benchmark_task_count", "benchmark_runs",
+    "benchmark_task_ids", "benchmark_task_hash", "backend", "model", "llm_size_bytes",
+    "sample_id", "sample_name", "case_id", "case_title", "run", "wall_ms",
+    "elapsed_p50_ms", "elapsed_p95_ms", "prompt_tokens", "output_tokens", "output_tps",
+    "quality_score", "keyword_hits", "keyword_total", "forbidden_hits", "avg_cpu_pct",
+    "max_cpu_pct", "avg_mem_pct", "max_mem_pct", "avg_gpu_pct", "max_gpu_pct",
+    "avg_vram_used_mb", "max_vram_used_mb", "avg_pcie_rx_mb_s", "max_pcie_rx_mb_s",
+    "avg_pcie_tx_mb_s", "max_pcie_tx_mb_s", "io_read", "io_write",
+    "local_model_startup_sec", "local_model_shutdown_sec", "cpu_time_sec", "recorded_at",
+    "status", "run_started_at", "run_finished_at", "hardware_profile", "provenance",
+    "launch_profile", "server_executable", "model_path", "launch_params",
+    "rating", "agent_suitability", "output_preview", "error",
+]
+HISTORY_CSV_COLUMNS = ["source_csv"] + DETAIL_CSV_COLUMNS
 
 # Oracle-specific syntax that must NOT appear in any PostgreSQL output
 _ORACLE_FORBIDDEN_SQL = [
@@ -406,6 +424,12 @@ class BenchResult:
     cpu_time_sec: float
     output_preview: str
     error: str
+    avg_pcie_rx_mb_s: Optional[float] = None
+    max_pcie_rx_mb_s: Optional[float] = None
+    avg_pcie_tx_mb_s: Optional[float] = None
+    max_pcie_tx_mb_s: Optional[float] = None
+    io_read: Optional[int] = None
+    io_write: Optional[int] = None
     local_model_startup_sec: Optional[float] = None
     local_model_shutdown_sec: Optional[float] = None
     benchmark_run_id: str = ""
@@ -417,6 +441,72 @@ class BenchResult:
     benchmark_task_ids: str = ""
     benchmark_task_hash: str = ""
     recorded_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    llm_size_bytes: Optional[int] = None
+    status: str = "measured"
+    run_started_at: str = ""
+    run_finished_at: str = ""
+    hardware_profile: str = ""
+    provenance: str = "measured"
+    launch_profile: str = ""
+    server_executable: str = ""
+    model_path: str = ""
+    launch_params: str = ""
+
+
+def launch_metadata(
+    args: argparse.Namespace,
+    backend: str,
+    model_path: str = "",
+    is_ik_fork: bool = False,
+) -> Dict[str, str]:
+    """Return the exact reproducibility settings used for a local model run."""
+    if backend == "ollama":
+        profile = "ollama-api"
+        executable = "ollama"
+    else:
+        profile = (
+            f"ik-{args.ik_offload_profile}"
+            if is_ik_fork
+            else "upstream-fit"
+        )
+        executable = str(args.llama_server or args.llama_cli)
+    params = {
+        "backend": backend,
+        "server_kind": "ik_llama.cpp" if is_ik_fork else ("ollama" if backend == "ollama" else "llama.cpp"),
+        "ctx_size": args.ctx_size,
+        "threads": args.threads,
+        "threads_batch": args.threads,
+        "ngl": args.ngl,
+        "batch_size": args.llama_batch_size,
+        "ubatch_size": args.llama_ubatch_size,
+        "kv_cache_k": "q8_0" if backend != "ollama" else "ollama-default",
+        "kv_cache_v": "q8_0" if backend != "ollama" else "ollama-default",
+        "flash_attention": backend != "ollama",
+        "continuous_batching": False if backend != "ollama" else "ollama-default",
+        "offload_profile": args.ik_offload_profile if is_ik_fork else "fit",
+        "fit_margin_mib": args.llama_fit_target_mib,
+        "n_cpu_moe": args.ik_n_cpu_moe if is_ik_fork else None,
+        "spec_type": list(args.ik_spec_type) if is_ik_fork else [],
+        "spec_autotune": bool(args.ik_spec_autotune) if is_ik_fork else False,
+    }
+    return {
+        "launch_profile": profile,
+        "server_executable": executable,
+        "model_path": model_path,
+        "launch_params": json.dumps(params, sort_keys=True, separators=(",", ":")),
+    }
+
+
+def stamp_launch_metadata(
+    result: BenchResult,
+    args: argparse.Namespace,
+    backend: str,
+    model_path: str = "",
+    is_ik_fork: bool = False,
+) -> BenchResult:
+    for key, value in launch_metadata(args, backend, model_path, is_ik_fork).items():
+        setattr(result, key, value)
+    return result
 
 
 class SystemMonitor:
@@ -433,6 +523,12 @@ class SystemMonitor:
         self.mem_samples: List[float] = []
         self.gpu_samples: List[float] = []
         self.vram_samples: List[float] = []
+        self.pcie_rx_samples: List[float] = []
+        self.pcie_tx_samples: List[float] = []
+        self.io_read_samples: List[int] = []
+        self.io_write_samples: List[int] = []
+        self._io_baseline: Dict[int, Tuple[int, int]] = {}
+        self._io_last: Tuple[Optional[int], Optional[int]] = (None, None)
         self.target_pids: List[int] = [int(pid) for pid in (target_pids or []) if int(pid) > 0]
         self.process_name_filters: List[str] = [f.strip().lower() for f in (process_name_filters or []) if f.strip()]
         self.nvidia_smi_available = self._check_nvidia_smi()
@@ -479,6 +575,26 @@ class SystemMonitor:
         except Exception:
             return None, None
 
+    @staticmethod
+    def _query_pcie() -> Tuple[Optional[float], Optional[float]]:
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "dmon", "-i", "0", "-s", "t", "-c", "1", "-d", "1", "-o", "T"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if r.returncode != 0:
+                return None, None
+            for line in reversed(r.stdout.splitlines()):
+                parts = line.split()
+                if len(parts) >= 4 and parts[1].isdigit():
+                    return float(parts[2]), float(parts[3])
+            return None, None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None, None
+
     def _run(self) -> None:
         psutil.cpu_percent(interval=None)
         while not self._stop.is_set():
@@ -490,12 +606,23 @@ class SystemMonitor:
             self.cpu_samples.append(cpu)
             if mem is not None:
                 self.mem_samples.append(mem)
+            io_read, io_write = self._query_io_delta()
+            if io_read is not None:
+                self.io_read_samples.append(io_read)
+            if io_write is not None:
+                self.io_write_samples.append(io_write)
+            self._io_last = (io_read, io_write)
             if self.nvidia_smi_available:
                 gpu, vram = self._query_gpu()
                 if gpu is not None:
                     self.gpu_samples.append(gpu)
                 if vram is not None:
                     self.vram_samples.append(vram)
+                pcie_rx, pcie_tx = self._query_pcie()
+                if pcie_rx is not None:
+                    self.pcie_rx_samples.append(pcie_rx)
+                if pcie_tx is not None:
+                    self.pcie_tx_samples.append(pcie_tx)
 
     def _collect_target_pids(self) -> Set[int]:
         pids: Set[int] = set(self.target_pids)
@@ -531,6 +658,27 @@ class SystemMonitor:
             return None
         return (rss_total / total_mem) * 100.0
 
+    def _query_io_delta(self) -> Tuple[Optional[int], Optional[int]]:
+        pids = self._collect_target_pids()
+        if not pids:
+            pids = {os.getpid()}
+        read_total = 0
+        write_total = 0
+        observed = False
+        for pid in pids:
+            try:
+                counters = psutil.Process(pid).io_counters()
+                current = (int(counters.read_bytes), int(counters.write_bytes))
+            except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, OSError):
+                continue
+            observed = True
+            baseline = self._io_baseline.setdefault(pid, current)
+            read_total += max(0, current[0] - baseline[0])
+            write_total += max(0, current[1] - baseline[1])
+        if not observed:
+            return None, None
+        return read_total, write_total
+
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -550,6 +698,12 @@ class SystemMonitor:
             "max_gpu_pct": max(self.gpu_samples) if self.gpu_samples else None,
             "avg_vram_used_mb": mean(self.vram_samples) if self.vram_samples else None,
             "max_vram_used_mb": max(self.vram_samples) if self.vram_samples else None,
+            "avg_pcie_rx_mb_s": mean(self.pcie_rx_samples) if self.pcie_rx_samples else None,
+            "max_pcie_rx_mb_s": max(self.pcie_rx_samples) if self.pcie_rx_samples else None,
+            "avg_pcie_tx_mb_s": mean(self.pcie_tx_samples) if self.pcie_tx_samples else None,
+            "max_pcie_tx_mb_s": max(self.pcie_tx_samples) if self.pcie_tx_samples else None,
+            "io_read": self._io_last[0],
+            "io_write": self._io_last[1],
         }
 
 
@@ -796,6 +950,35 @@ def parse_args() -> argparse.Namespace:
         help="Extra args appended to llama-cli / llama-server command line.",
     )
     parser.add_argument(
+        "--ik-offload-profile",
+        choices=["baseline", "fit", "n-cpu-moe"],
+        default="baseline",
+        help=(
+            "ik_llama.cpp offload profile: baseline forces exps=CPU, fit uses "
+            "--fit, n-cpu-moe keeps the first N MoE layers in CPU memory."
+        ),
+    )
+    parser.add_argument(
+        "--ik-n-cpu-moe",
+        type=int,
+        default=None,
+        help="N for --ik-offload-profile n-cpu-moe.",
+    )
+    parser.add_argument(
+        "--ik-spec-type",
+        action="append",
+        default=[],
+        help=(
+            "ik speculative stage, repeatable; use canonical values such as "
+            "mtp:n_max=1,p_min=0.0 or ngram-mod:n_max=64."
+        ),
+    )
+    parser.add_argument(
+        "--ik-spec-autotune",
+        action="store_true",
+        help="Enable ik speculative decoding autotuning.",
+    )
+    parser.add_argument(
         "--llama-reasoning",
         choices=["off", "on", "auto"],
         default="off",
@@ -905,6 +1088,12 @@ def row_to_bench_result(row: Dict[str, str]) -> BenchResult:
         max_gpu_pct=parse_opt_float(row.get("max_gpu_pct", "")),
         avg_vram_used_mb=parse_opt_float(row.get("avg_vram_used_mb", "")),
         max_vram_used_mb=parse_opt_float(row.get("max_vram_used_mb", "")),
+        avg_pcie_rx_mb_s=parse_opt_float(row.get("avg_pcie_rx_mb_s", "")),
+        max_pcie_rx_mb_s=parse_opt_float(row.get("max_pcie_rx_mb_s", "")),
+        avg_pcie_tx_mb_s=parse_opt_float(row.get("avg_pcie_tx_mb_s", "")),
+        max_pcie_tx_mb_s=parse_opt_float(row.get("max_pcie_tx_mb_s", "")),
+        io_read=parse_opt_int(row.get("io_read", "")),
+        io_write=parse_opt_int(row.get("io_write", "")),
         cpu_time_sec=parse_opt_float(row.get("cpu_time_sec", "")) or 0.0,
         output_preview=row.get("output_preview", ""),
         error=row.get("error", ""),
@@ -1104,6 +1293,23 @@ def list_ollama_models() -> List[str]:
     return out
 
 
+def ollama_model_size_bytes(model: str) -> Optional[int]:
+    """Best-effort installed model size from ``ollama list``."""
+    result = run_command(["ollama", "list"], timeout_sec=20)
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if not line.lower().startswith(model.lower() + " "):
+            continue
+        match = re.search(r"\b([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|GB|TB)\b", line, re.I)
+        if not match:
+            return None
+        value = float(match.group(1))
+        multiplier = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}[match.group(2).upper()]
+        return int(value * multiplier)
+    return None
+
+
 def find_model(candidates: List[str], include_terms: List[str]) -> Optional[str]:
     for name in candidates:
         lowered = name.lower()
@@ -1268,6 +1474,12 @@ def run_ollama_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+            max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+            avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+            max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+            io_read=m["io_read"],
+            io_write=m["io_write"],
             cpu_time_sec=cpu_time,
             output_preview=cleaned_text[:220].replace("\n", "\\n"),
             error="",
@@ -1301,6 +1513,12 @@ def run_ollama_case(
         max_gpu_pct=m["max_gpu_pct"],
         avg_vram_used_mb=m["avg_vram_used_mb"],
         max_vram_used_mb=m["max_vram_used_mb"],
+        avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+        max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+        avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+        max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+        io_read=m["io_read"],
+        io_write=m["io_write"],
         cpu_time_sec=time.process_time() - cpu_start,
         output_preview="",
         error=err,
@@ -1376,6 +1594,12 @@ def run_llama_cpp_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+            max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+            avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+            max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+            io_read=m["io_read"],
+            io_write=m["io_write"],
             cpu_time_sec=time.process_time() - cpu_start,
             output_preview="",
             error=f"Model file not found: {model_path}",
@@ -1434,6 +1658,12 @@ def run_llama_cpp_case(
                 max_gpu_pct=m["max_gpu_pct"],
                 avg_vram_used_mb=m["avg_vram_used_mb"],
                 max_vram_used_mb=m["max_vram_used_mb"],
+                avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+                max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+                avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+                max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+            io_read=m["io_read"],
+            io_write=m["io_write"],
                 cpu_time_sec=time.process_time() - cpu_start,
                 output_preview=clean_model_output(result.stdout or "")[:220].replace("\n", "\\n"),
                 error=f"llama-cli failed ({result.returncode}): {err_out[:300]}",
@@ -1467,6 +1697,12 @@ def run_llama_cpp_case(
             max_gpu_pct=m["max_gpu_pct"],
             avg_vram_used_mb=m["avg_vram_used_mb"],
             max_vram_used_mb=m["max_vram_used_mb"],
+            avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+            max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+            avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+            max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+            io_read=m["io_read"],
+            io_write=m["io_write"],
             cpu_time_sec=time.process_time() - cpu_start,
             output_preview=output_text[:220].replace("\n", "\\n"),
             error="",
@@ -1502,6 +1738,10 @@ def run_llama_cpp_case(
         max_gpu_pct=m["max_gpu_pct"],
         avg_vram_used_mb=m["avg_vram_used_mb"],
         max_vram_used_mb=m["max_vram_used_mb"],
+        avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+        max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+        avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+        max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
         cpu_time_sec=time.process_time() - cpu_start,
         output_preview="",
         error=err,
@@ -1542,6 +1782,7 @@ def run_llama_server_model(
                 r.local_model_startup_sec = startup_sec
             if r.local_model_shutdown_sec is None:
                 r.local_model_shutdown_sec = shutdown_sec
+            stamp_launch_metadata(r, args, "llama_cpp", model_path, is_ik_fork)
         return results
 
     completed = completed_keys or set()
@@ -1582,6 +1823,7 @@ def run_llama_server_model(
         return finalize_results()
 
     port = pick_free_port()
+    is_ik_fork = "llama.cpp-ik" in os.path.normcase(os.path.abspath(server_exe))
     server_args = [
         server_exe,
         "-m",
@@ -1600,27 +1842,87 @@ def run_llama_server_model(
         str(args.ngl),
         "--reasoning",
         args.llama_reasoning,
-        "--reasoning-format",
-        "none",
-        "--fit",
-        "on",
-        "--fit-target",
-        str(args.llama_fit_target_mib),
         "-np",
         "1",
         "-b",
         str(args.llama_batch_size),
         "-ub",
         str(args.llama_ubatch_size),
-        "--no-webui",
     ]
+    if is_ik_fork:
+        server_args[server_args.index("--n-gpu-layers")] = "-ngl"
+    if is_ik_fork:
+        # Keep the validated single-GPU settings explicit. The offload profile
+        # is selectable so fit and partial-MoE experiments use the same suite.
+        server_args.extend(
+            [
+                "--threads-batch",
+                str(args.threads),
+                "--flash-attn",
+                "on",
+                "--attention-max-batch",
+                "512",
+                "--cache-type-k",
+                "q8_0",
+                "--cache-type-v",
+                "q8_0",
+                "--no-cont-batching",
+                "--jinja",
+            ]
+        )
+        for spec_type in args.ik_spec_type:
+            server_args.extend(["--spec-type", spec_type])
+        if args.ik_spec_autotune:
+            server_args.append("--spec-autotune")
+        if args.ik_offload_profile == "baseline":
+            server_args.extend(["--override-tensor", "exps=CPU"])
+        elif args.ik_offload_profile == "fit":
+            server_args.extend(["--fit", "--fit-margin", str(args.llama_fit_target_mib)])
+        else:
+            if args.ik_n_cpu_moe is None or args.ik_n_cpu_moe < 0:
+                raise ValueError(
+                    "--ik-n-cpu-moe must be a non-negative integer when "
+                    "--ik-offload-profile=n-cpu-moe is selected"
+                )
+            server_args.extend(["--n-cpu-moe", str(args.ik_n_cpu_moe)])
+    if not is_ik_fork:
+        server_args.extend(
+            [
+                "--reasoning-format",
+                "none",
+                "--flash-attn",
+                "on",
+                "--cache-type-k",
+                "q8_0",
+                "--cache-type-v",
+                "q8_0",
+                "--threads-batch",
+                str(args.threads),
+                "--no-cont-batching",
+            ]
+        )
+        server_args[server_args.index("-np") : server_args.index("-np")] = [
+            "--fit",
+            "on",
+            "--fit-target",
+            str(args.llama_fit_target_mib),
+        ]
+        server_args.append("--no-webui")
     server_args.extend(parse_extra_args(args.llama_extra_args))
 
     boot_start = time.perf_counter()
     try:
         server_log = tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False)
         server_log.close()
-        proc = subprocess.Popen(server_args, stdout=open(server_log.name, "a", encoding="utf-8", errors="replace"), stderr=subprocess.STDOUT)
+        server_env = os.environ.copy()
+        cuda_bin = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64"
+        server_env["PATH"] = os.pathsep.join([cuda_bin, server_env.get("PATH", "")])
+        proc = subprocess.Popen(
+            server_args,
+            stdout=open(server_log.name, "a", encoding="utf-8", errors="replace"),
+            stderr=subprocess.STDOUT,
+            env=server_env,
+        )
     except Exception as exc:
         startup_sec = time.perf_counter() - boot_start
         err = f"Failed to start llama-server: {exc}"
@@ -1728,9 +2030,49 @@ def run_llama_server_model(
                         headers={"Content-Type": "application/json"},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=args.timeout_sec) as response:
-                        raw = response.read().decode("utf-8")
-                        parsed = json.loads(raw)
+                    try:
+                        with urllib.request.urlopen(req, timeout=args.timeout_sec) as response:
+                            raw = response.read().decode("utf-8")
+                            parsed = json.loads(raw)
+                    except urllib.error.HTTPError as exc:
+                        if exc.code != 500:
+                            raise
+                        fallback_payload = {
+                            "prompt": (
+                                "You are a PostgreSQL migration assistant. "
+                                "Return SQL only, no markdown, no explanations.\n\n"
+                                + case["prompt"]
+                            ),
+                            **({"n_predict": args.max_tokens} if args.max_tokens is not None else {}),
+                            "seed": args.seed,
+                            "temperature": args.temp,
+                            "top_p": args.top_p,
+                            "repeat_penalty": args.repeat_penalty,
+                            "stream": False,
+                        }
+                        fallback_req = urllib.request.Request(
+                            f"http://127.0.0.1:{port}/completion",
+                            data=json.dumps(fallback_payload).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(
+                            fallback_req, timeout=args.timeout_sec
+                        ) as response:
+                            fallback = json.loads(response.read().decode("utf-8"))
+                        parsed = {
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": str(fallback.get("content") or "")
+                                    }
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": fallback.get("tokens_evaluated"),
+                                "completion_tokens": fallback.get("tokens_predicted"),
+                            },
+                        }
 
                     monitor.stop()
                     m = monitor.stats()
@@ -1779,6 +2121,12 @@ def run_llama_server_model(
                             max_gpu_pct=m["max_gpu_pct"],
                             avg_vram_used_mb=m["avg_vram_used_mb"],
                             max_vram_used_mb=m["max_vram_used_mb"],
+                            avg_pcie_rx_mb_s=m["avg_pcie_rx_mb_s"],
+                            max_pcie_rx_mb_s=m["max_pcie_rx_mb_s"],
+                            avg_pcie_tx_mb_s=m["avg_pcie_tx_mb_s"],
+                            max_pcie_tx_mb_s=m["max_pcie_tx_mb_s"],
+            io_read=m["io_read"],
+            io_write=m["io_write"],
                             cpu_time_sec=time.process_time() - cpu_start,
                             output_preview=cleaned_text[:220].replace("\n", "\\n"),
                             error="",
@@ -2008,93 +2356,47 @@ def save_results(
     run_tag: Optional[str] = None,
     inprogress: bool = False,
 ) -> Tuple[str, str]:
+    def sample_id(r: BenchResult) -> str:
+        return f"{r.benchmark_run_id}:{r.backend}:{r.model}:{r.case_id}:{r.run}"
+
+    def sample_rating(r: BenchResult) -> float:
+        return max(0.0, min(100.0, float(r.quality_score) if not r.error else 0.0))
+
+    def sample_suitability(r: BenchResult) -> str:
+        if r.error:
+            return "not suitable"
+        if r.quality_score >= 85.0:
+            return "suitable"
+        if r.quality_score >= 70.0:
+            return "conditional"
+        return "not suitable"
+
     os.makedirs(output_dir, exist_ok=True)
     ts = run_tag or datetime.now().strftime("%Y%m%d_%H%M%S")
     suffix = "_inprogress" if inprogress else ""
     csv_path = os.path.join(output_dir, f"migration_llm_bench_{ts}{suffix}.csv")
     json_path = os.path.join(output_dir, f"migration_llm_bench_{ts}{suffix}.json")
 
+    def detail_row(r: BenchResult) -> Dict[str, object]:
+        row = dict(r.__dict__)
+        row.update({
+            "schema_version": CSV_SCHEMA_VERSION,
+            "sample_id": sample_id(r),
+            "sample_name": r.case_title,
+            "rating": f"{sample_rating(r):.2f}",
+            "agent_suitability": sample_suitability(r),
+            "elapsed_p50_ms": "",
+            "elapsed_p95_ms": "",
+        })
+        for key in ("llm_size_bytes", "prompt_tokens", "output_tokens", "io_read", "io_write"):
+            if row.get(key) is None:
+                row[key] = ""
+        return {key: row.get(key, "") for key in DETAIL_CSV_COLUMNS}
+
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(
-            [
-                "benchmark_run_id",
-                "benchmark_name",
-                "benchmark_spec_version",
-                "benchmark_script_file",
-                "benchmark_task_count",
-                "benchmark_runs",
-                "benchmark_task_ids",
-                "benchmark_task_hash",
-                "backend",
-                "model",
-                "case_id",
-                "case_title",
-                "run",
-                "wall_ms",
-                "prompt_tokens",
-                "output_tokens",
-                "output_tps",
-                "quality_score",
-                "keyword_hits",
-                "keyword_total",
-                "forbidden_hits",
-                "avg_cpu_pct",
-                "max_cpu_pct",
-                "avg_mem_pct",
-                "max_mem_pct",
-                "avg_gpu_pct",
-                "max_gpu_pct",
-                "avg_vram_used_mb",
-                "max_vram_used_mb",
-                "local_model_startup_sec",
-                "local_model_shutdown_sec",
-                "cpu_time_sec",
-                "recorded_at",
-                "output_preview",
-                "error",
-            ]
-        )
-        for r in results:
-            writer.writerow(
-                [
-                    r.benchmark_run_id,
-                    r.benchmark_name,
-                    r.benchmark_spec_version,
-                    r.benchmark_script_file,
-                    r.benchmark_task_count,
-                    r.benchmark_runs,
-                    r.benchmark_task_ids,
-                    r.benchmark_task_hash,
-                    r.backend,
-                    r.model,
-                    r.case_id,
-                    r.case_title,
-                    r.run,
-                    f"{r.wall_ms:.2f}",
-                    r.prompt_tokens if r.prompt_tokens is not None else "",
-                    r.output_tokens if r.output_tokens is not None else "",
-                    f"{r.output_tps:.2f}" if r.output_tps is not None else "",
-                    f"{r.quality_score:.2f}",
-                    r.keyword_hits,
-                    r.keyword_total,
-                    r.forbidden_hits,
-                    f"{r.avg_cpu_pct:.2f}" if r.avg_cpu_pct is not None else "",
-                    f"{r.max_cpu_pct:.2f}" if r.max_cpu_pct is not None else "",
-                    f"{r.avg_mem_pct:.2f}" if r.avg_mem_pct is not None else "",
-                    f"{r.max_mem_pct:.2f}" if r.max_mem_pct is not None else "",
-                    f"{r.avg_gpu_pct:.2f}" if r.avg_gpu_pct is not None else "",
-                    f"{r.max_gpu_pct:.2f}" if r.max_gpu_pct is not None else "",
-                    f"{r.avg_vram_used_mb:.2f}" if r.avg_vram_used_mb is not None else "",
-                    f"{r.max_vram_used_mb:.2f}" if r.max_vram_used_mb is not None else "",
-                    f"{r.local_model_startup_sec:.3f}" if r.local_model_startup_sec is not None else "",
-                    f"{r.local_model_shutdown_sec:.3f}" if r.local_model_shutdown_sec is not None else "",
-                    f"{r.cpu_time_sec:.3f}",
-                    r.recorded_at,
-                    r.output_preview,
-                    r.error,
-                ]
-            )
+        writer = csv.DictWriter(f, fieldnames=DETAIL_CSV_COLUMNS)
+        writer.writeheader()
+        writer.writerows(detail_row(r) for r in results)
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump([r.__dict__ for r in results], f, indent=2)
@@ -2102,91 +2404,38 @@ def save_results(
     # Persist final run rows into a long-lived history CSV for cross-run reporting.
     if not inprogress:
         history_csv = os.path.join(output_dir, "migration_llm_bench_history.csv")
-        history_header = [
-            "source_csv",
-            "benchmark_run_id",
-            "benchmark_name",
-            "benchmark_spec_version",
-            "benchmark_script_file",
-            "benchmark_task_count",
-            "benchmark_runs",
-            "benchmark_task_ids",
-            "benchmark_task_hash",
-            "backend",
-            "model",
-            "case_id",
-            "case_title",
-            "run",
-            "wall_ms",
-            "prompt_tokens",
-            "output_tokens",
-            "output_tps",
-            "quality_score",
-            "keyword_hits",
-            "keyword_total",
-            "forbidden_hits",
-            "avg_cpu_pct",
-            "max_cpu_pct",
-            "avg_mem_pct",
-            "max_mem_pct",
-            "avg_gpu_pct",
-            "max_gpu_pct",
-            "avg_vram_used_mb",
-            "max_vram_used_mb",
-            "local_model_startup_sec",
-            "local_model_shutdown_sec",
-            "cpu_time_sec",
-            "recorded_at",
-            "output_preview",
-            "error",
-        ]
+        history_header = list(HISTORY_CSV_COLUMNS)
+        if os.path.exists(history_csv):
+            with open(history_csv, newline="", encoding="utf-8") as hf:
+                existing_reader = csv.DictReader(hf)
+                existing_rows = list(existing_reader)
+                existing_fields = list(existing_reader.fieldnames or [])
+            extra_fields = [field for field in existing_fields if field not in history_header]
+            active_history_header = history_header + extra_fields
+            missing_fields = [field for field in active_history_header if field not in existing_fields]
+            if missing_fields or existing_fields != active_history_header:
+                for row in existing_rows:
+                    for field in active_history_header:
+                        if field not in row:
+                            row[field] = ""
+                    for field in missing_fields:
+                        row[field] = ""
+                migrated_path = history_csv + ".tmp"
+                with open(migrated_path, "w", newline="", encoding="utf-8") as migrated:
+                    migrated_writer = csv.DictWriter(migrated, fieldnames=active_history_header)
+                    migrated_writer.writeheader()
+                    migrated_writer.writerows(existing_rows)
+                os.replace(migrated_path, history_csv)
+            history_header = active_history_header
         write_header = not os.path.exists(history_csv)
         with open(history_csv, "a", newline="", encoding="utf-8") as hf:
-            writer = csv.writer(hf)
+            writer = csv.DictWriter(hf, fieldnames=history_header)
             if write_header:
-                writer.writerow(history_header)
+                writer.writeheader()
             source_name = os.path.basename(csv_path)
             for r in results:
-                writer.writerow(
-                    [
-                        source_name,
-                        r.benchmark_run_id,
-                        r.benchmark_name,
-                        r.benchmark_spec_version,
-                        r.benchmark_script_file,
-                        r.benchmark_task_count,
-                        r.benchmark_runs,
-                        r.benchmark_task_ids,
-                        r.benchmark_task_hash,
-                        r.backend,
-                        r.model,
-                        r.case_id,
-                        r.case_title,
-                        r.run,
-                        f"{r.wall_ms:.2f}",
-                        r.prompt_tokens if r.prompt_tokens is not None else "",
-                        r.output_tokens if r.output_tokens is not None else "",
-                        f"{r.output_tps:.2f}" if r.output_tps is not None else "",
-                        f"{r.quality_score:.2f}",
-                        r.keyword_hits,
-                        r.keyword_total,
-                        r.forbidden_hits,
-                        f"{r.avg_cpu_pct:.2f}" if r.avg_cpu_pct is not None else "",
-                        f"{r.max_cpu_pct:.2f}" if r.max_cpu_pct is not None else "",
-                        f"{r.avg_mem_pct:.2f}" if r.avg_mem_pct is not None else "",
-                        f"{r.max_mem_pct:.2f}" if r.max_mem_pct is not None else "",
-                        f"{r.avg_gpu_pct:.2f}" if r.avg_gpu_pct is not None else "",
-                        f"{r.max_gpu_pct:.2f}" if r.max_gpu_pct is not None else "",
-                        f"{r.avg_vram_used_mb:.2f}" if r.avg_vram_used_mb is not None else "",
-                        f"{r.max_vram_used_mb:.2f}" if r.max_vram_used_mb is not None else "",
-                        f"{r.local_model_startup_sec:.3f}" if r.local_model_startup_sec is not None else "",
-                        f"{r.local_model_shutdown_sec:.3f}" if r.local_model_shutdown_sec is not None else "",
-                        f"{r.cpu_time_sec:.3f}",
-                        r.recorded_at,
-                        r.output_preview,
-                        r.error,
-                    ]
-                )
+                row = {"source_csv": source_name, **detail_row(r)}
+                writer.writerow({key: row.get(key, "") for key in history_header})
 
     return csv_path, json_path
 
@@ -2257,6 +2506,18 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         except ValueError:
             return None
 
+    def percentile(values: List[float], fraction: float) -> Optional[float]:
+        ordered = sorted(values)
+        if not ordered:
+            return None
+        if len(ordered) == 1:
+            return ordered[0]
+        position = (len(ordered) - 1) * fraction
+        lower = int(position)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = position - lower
+        return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
+
     def fmt_eta(sec: Optional[float]) -> str:
         if sec is None:
             return ""
@@ -2322,13 +2583,24 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                     pass_hits += 1
             quality = (pass_hits / len(rows)) * 100.0
         wall_ms = avg("wall_ms")
+        elapsed_values = [to_float(r.get("wall_ms", "")) for r in ok]
+        elapsed_values = [v for v in elapsed_values if v is not None]
         tps = avg("output_tps")
         max_gpu = mx("max_gpu_pct")
         min_gpu = mn("avg_gpu_pct")
         total_wall_ms = sum(to_float(r.get("wall_ms", "")) or 0.0 for r in ok)
         recorded_vals = [r.get("recorded_at", "") for r in rows if r.get("recorded_at", "")]
-        run_started_at = min(recorded_vals) if recorded_vals else ""
-        run_last_updated_at = max(recorded_vals) if recorded_vals else ""
+        started_vals = [r.get("run_started_at", "") for r in rows if r.get("run_started_at", "")]
+        finished_vals = [r.get("run_finished_at", "") for r in rows if r.get("run_finished_at", "")]
+        run_started_at = min(started_vals or recorded_vals) if (started_vals or recorded_vals) else ""
+        run_finished_at = max(finished_vals or recorded_vals) if (finished_vals or recorded_vals) else ""
+        run_last_updated_at = max(recorded_vals) if recorded_vals else run_finished_at
+        schema_versions = sorted({r.get("schema_version", "") for r in rows if r.get("schema_version", "")})
+        statuses = {r.get("status", "") for r in rows if r.get("status", "")}
+        hardware_profiles = sorted({r.get("hardware_profile", "") for r in rows if r.get("hardware_profile", "")})
+        provenances = sorted({r.get("provenance", "") for r in rows if r.get("provenance", "")})
+        llm_sizes = [to_int(r.get("llm_size_bytes", "")) for r in rows]
+        llm_sizes = [v for v in llm_sizes if v is not None]
         task_count = to_int(rows[0].get("benchmark_task_count", "")) if rows else None
         run_count = to_int(rows[0].get("benchmark_runs", "")) if rows else None
         if run_count is None:
@@ -2349,6 +2621,14 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         vram_avg_mb = avg("avg_vram_used_mb")
         vram_min_mb = mn("avg_vram_used_mb")
         vram_max_mb = mx("max_vram_used_mb")
+        pcie_rx_avg = avg("avg_pcie_rx_mb_s")
+        pcie_rx_max = mx("max_pcie_rx_mb_s")
+        pcie_tx_avg = avg("avg_pcie_tx_mb_s")
+        pcie_tx_max = mx("max_pcie_tx_mb_s")
+        io_read_total = sum(to_float(r.get("io_read", "")) or 0.0 for r in rows if to_float(r.get("io_read", "")) is not None)
+        io_write_total = sum(to_float(r.get("io_write", "")) or 0.0 for r in rows if to_float(r.get("io_write", "")) is not None)
+        io_read_available = any(to_float(r.get("io_read", "")) is not None for r in rows)
+        io_write_available = any(to_float(r.get("io_write", "")) is not None for r in rows)
         local_startup_s = avg_all("local_model_startup_sec")
         local_shutdown_s = avg_all("local_model_shutdown_sec")
         avg_wall_s = (wall_ms / 1000.0) if wall_ms is not None else None
@@ -2369,6 +2649,8 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 "reliability": reliability,
                 "quality": quality,
                 "wall_ms": wall_ms,
+                "elapsed_p50_ms": percentile(elapsed_values, 0.50),
+                "elapsed_p95_ms": percentile(elapsed_values, 0.95),
                 "tps": tps,
                 "cpu": avg("avg_cpu_pct"),
                 "mem": mem_avg_pct,
@@ -2383,8 +2665,24 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 "vram_gb": (vram_avg_mb / 1024.0) if vram_avg_mb is not None else None,
                 "min_vram_gb": (vram_min_mb / 1024.0) if vram_min_mb is not None else None,
                 "max_vram_gb": (vram_max_mb / 1024.0) if vram_max_mb is not None else None,
+                "pcie_rx_mb_s": pcie_rx_avg,
+                "pcie_rx_max_mb_s": pcie_rx_max,
+                "pcie_tx_mb_s": pcie_tx_avg,
+                "pcie_tx_max_mb_s": pcie_tx_max,
+                "io_read": int(io_read_total) if io_read_available else None,
+                "io_write": int(io_write_total) if io_write_available else None,
                 "total_wall_ms": total_wall_ms,
                 "run_started_at": run_started_at,
+                "run_finished_at": run_finished_at,
+                "schema_version": ",".join(schema_versions) or CSV_SCHEMA_VERSION,
+                "launch_profile": ",".join(sorted({r.get("launch_profile", "") for r in rows if r.get("launch_profile", "")})),
+                "server_executable": ",".join(sorted({r.get("server_executable", "") for r in rows if r.get("server_executable", "")})),
+                "model_path": ",".join(sorted({r.get("model_path", "") for r in rows if r.get("model_path", "")})),
+                "launch_params": ",".join(sorted({r.get("launch_params", "") for r in rows if r.get("launch_params", "")})),
+                "status": "error" if error_count else ("done" if not live_mode else "running"),
+                "hardware_profile": ",".join(hardware_profiles),
+                "provenance": ",".join(provenances),
+                "llm_size_bytes": max(llm_sizes) if llm_sizes else None,
                 "run_last_updated_at": run_last_updated_at,
                 "local_startup_s": local_startup_s,
                 "local_shutdown_s": local_shutdown_s,
@@ -2493,6 +2791,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
 
     # Cross-benchmark overview from persistent history.
     history_summary_rows: List[Dict[str, object]] = []
+    history_run_summary_rows: List[Dict[str, object]] = []
     history_csv = os.path.join(results_dir, "migration_llm_bench_history.csv")
     if os.path.exists(history_csv):
         try:
@@ -2523,6 +2822,10 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 vram_vals_h = [to_float(r.get("avg_vram_used_mb", "")) for r in ok_h]
                 vram_vals_h = [v for v in vram_vals_h if v is not None]
                 vram_mb_h = mean(vram_vals_h) if vram_vals_h else None
+                rx_vals_h = [to_float(r.get("avg_pcie_rx_mb_s", "")) for r in ok_h]
+                rx_vals_h = [v for v in rx_vals_h if v is not None]
+                tx_vals_h = [to_float(r.get("avg_pcie_tx_mb_s", "")) for r in ok_h]
+                tx_vals_h = [v for v in tx_vals_h if v is not None]
                 rel_h = (len(ok_h) / len(rows_h)) * 100.0 if rows_h else 0.0
                 error_count_h = len([r for r in rows_h if (r.get("error") or "").strip()])
                 error_rate_h = (error_count_h / len(rows_h)) * 100.0 if rows_h else 0.0
@@ -2554,11 +2857,142 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                         "avg_gpu": gpu_h,
                         "avg_ram_gb": ((mem_pct_h / 100.0) * system_ram_gb) if mem_pct_h is not None else None,
                         "avg_vram_gb": (vram_mb_h / 1024.0) if vram_mb_h is not None else None,
+                        "avg_pcie_rx_mb_s": mean(rx_vals_h) if rx_vals_h else None,
+                        "avg_pcie_tx_mb_s": mean(tx_vals_h) if tx_vals_h else None,
                     }
                 )
             history_summary_rows.sort(key=lambda r: (str(r["benchmark"]), str(r["backend"]), -(float(r["score"]) if r.get("score") is not None else 0.0), str(r["model"])))
+
+            history_runs: Dict[Tuple[str, str, str, str], List[Dict[str, str]]] = {}
+            for hr in hrows:
+                history_runs.setdefault(
+                    (
+                        hr.get("benchmark_run_id", ""),
+                        hr.get("benchmark_name", ""),
+                        hr.get("backend", ""),
+                        hr.get("model", ""),
+                    ),
+                    [],
+                ).append(hr)
+            for (_run_id, bench_name, backend_name, model_name), rows_h in history_runs.items():
+                ok_h = [r for r in rows_h if not (r.get("error") or "").strip()]
+                error_count_h = len(rows_h) - len(ok_h)
+                quality_h = mean([to_float(r.get("quality_score", "")) or 0.0 for r in ok_h]) if ok_h else None
+                reliability_h = (len(ok_h) / len(rows_h)) * 100.0 if rows_h else 0.0
+                elapsed_h_seconds = sum((to_float(r.get("wall_ms", "")) or 0.0) for r in ok_h) / 1000.0
+                avg_case_h_seconds = elapsed_h_seconds / len(ok_h) if ok_h else None
+                # Normalize elapsed performance against a 15-second-per-case
+                # target, then combine all three dimensions multiplicatively.
+                speed_h = (
+                    min(100.0, (15.0 / avg_case_h_seconds) * 100.0)
+                    if avg_case_h_seconds and avg_case_h_seconds > 0
+                    else 0.0
+                )
+                rating_h_score = (
+                    100.0
+                    * ((quality_h / 100.0) ** 0.60)
+                    * ((speed_h / 100.0) ** 0.25)
+                    * ((reliability_h / 100.0) ** 0.15)
+                    if quality_h is not None
+                    else 0.0
+                )
+                if quality_h is None or reliability_h < 90 or rating_h_score < 50:
+                    rating_h = "Not suitable"
+                elif rating_h_score >= 80 and quality_h >= 70 and reliability_h >= 98:
+                    rating_h = "Very suitable"
+                elif rating_h_score >= 65 and quality_h >= 50 and reliability_h >= 95:
+                    rating_h = "Suitable"
+                else:
+                    rating_h = "Limited suitability"
+                expected_success_h = (
+                    elapsed_h_seconds / ((quality_h / 100.0) * (reliability_h / 100.0))
+                    if quality_h and reliability_h > 0
+                    else None
+                )
+                if expected_success_h is None or quality_h is None or reliability_h < 90:
+                    agent_fit_h = "Not agent-ready"
+                elif quality_h >= 70 and reliability_h >= 95 and expected_success_h <= 120:
+                    agent_fit_h = "Strong agent fit"
+                elif quality_h >= 50 and reliability_h >= 90 and expected_success_h <= 180:
+                    agent_fit_h = "Conditional agent fit"
+                else:
+                    agent_fit_h = "Poor agent fit"
+                tps_h = [to_float(r.get("output_tps", "")) for r in ok_h]
+                cpu_h = [to_float(r.get("avg_cpu_pct", "")) for r in ok_h]
+                gpu_h = [to_float(r.get("avg_gpu_pct", "")) for r in ok_h]
+                mem_h = [to_float(r.get("avg_mem_pct", "")) for r in ok_h]
+                vram_h = [to_float(r.get("avg_vram_used_mb", "")) for r in ok_h]
+                rx_h = [to_float(r.get("avg_pcie_rx_mb_s", "")) for r in ok_h]
+                tx_h = [to_float(r.get("avg_pcie_tx_mb_s", "")) for r in ok_h]
+                rx_max_h = [to_float(r.get("max_pcie_rx_mb_s", "")) for r in ok_h]
+                tx_max_h = [to_float(r.get("max_pcie_tx_mb_s", "")) for r in ok_h]
+                io_read_h = [to_float(r.get("io_read", "")) for r in ok_h]
+                io_write_h = [to_float(r.get("io_write", "")) for r in ok_h]
+                task_count_h = to_int(rows_h[0].get("benchmark_task_count", "")) if rows_h else None
+                runs_h = to_int(rows_h[0].get("benchmark_runs", "")) if rows_h else None
+                expected_h = (task_count_h * runs_h) if task_count_h and runs_h else None
+                recorded_h = sorted(r.get("recorded_at", "") for r in rows_h if r.get("recorded_at", ""))
+                history_run_summary_rows.append(
+                    {
+                        "schema_version": sorted({r.get("schema_version", "") for r in rows_h if r.get("schema_version", "")})[0] if any(r.get("schema_version", "") for r in rows_h) else CSV_SCHEMA_VERSION,
+                        "launch_profile": ",".join(sorted({r.get("launch_profile", "") for r in rows_h if r.get("launch_profile", "")})),
+                        "server_executable": ",".join(sorted({r.get("server_executable", "") for r in rows_h if r.get("server_executable", "")})),
+                        "model_path": ",".join(sorted({r.get("model_path", "") for r in rows_h if r.get("model_path", "")})),
+                        "launch_params": ",".join(sorted({r.get("launch_params", "") for r in rows_h if r.get("launch_params", "")})),
+                        "status": "error" if error_count_h else "done",
+                        "run_started_at": min(
+                            [r.get("run_started_at", "") for r in rows_h if r.get("run_started_at", "")]
+                            or [r.get("recorded_at", "") for r in rows_h if r.get("recorded_at", "")]
+                            or [""]
+                        ),
+                        "run_finished_at": max(
+                            [r.get("run_finished_at", "") for r in rows_h if r.get("run_finished_at", "")]
+                            or [r.get("recorded_at", "") for r in rows_h if r.get("recorded_at", "")]
+                            or [""]
+                        ),
+                        "hardware_profile": ",".join(sorted({r.get("hardware_profile", "") for r in rows_h if r.get("hardware_profile", "")})),
+                        "provenance": ",".join(sorted({r.get("provenance", "") for r in rows_h if r.get("provenance", "")})),
+                        "llm_size_bytes": max(
+                            [to_int(r.get("llm_size_bytes", "")) for r in rows_h if to_int(r.get("llm_size_bytes", "")) is not None]
+                            or [None]
+                        ),
+                        "elapsed_p50_ms": percentile(
+                            [v for v in (to_float(r.get("wall_ms", "")) for r in ok_h) if v is not None], 0.50
+                        ),
+                        "elapsed_p95_ms": percentile(
+                            [v for v in (to_float(r.get("wall_ms", "")) for r in ok_h) if v is not None], 0.95
+                        ),
+                        "benchmark": bench_name,
+                        "backend": backend_name,
+                        "model": model_name,
+                        "last_update": recorded_h[-1] if recorded_h else "",
+                        "progress": f"{len(rows_h)}/{expected_h}" if expected_h else f"{len(rows_h)}/?",
+                        "avg_gpu": mean([v for v in gpu_h if v is not None]) if any(v is not None for v in gpu_h) else None,
+                        "avg_cpu": mean([v for v in cpu_h if v is not None]) if any(v is not None for v in cpu_h) else None,
+                        "used_vram_gb": (mean([v for v in vram_h if v is not None]) / 1024.0) if any(v is not None for v in vram_h) else None,
+                        "avg_pcie_rx_mb_s": mean([v for v in rx_h if v is not None]) if any(v is not None for v in rx_h) else None,
+                        "avg_pcie_tx_mb_s": mean([v for v in tx_h if v is not None]) if any(v is not None for v in tx_h) else None,
+                        "pcie_rx_max_mb_s": max(rx_max_h) if any(v is not None for v in rx_max_h) else None,
+                        "pcie_tx_max_mb_s": max(tx_max_h) if any(v is not None for v in tx_max_h) else None,
+                        "io_read": int(sum(v for v in io_read_h if v is not None)) if any(v is not None for v in io_read_h) else None,
+                        "io_write": int(sum(v for v in io_write_h if v is not None)) if any(v is not None for v in io_write_h) else None,
+                        "used_ram_gb": ((mean([v for v in mem_h if v is not None]) / 100.0) * system_ram_gb) if any(v is not None for v in mem_h) else None,
+                        "score": quality_h,
+                        "rating_score": rating_h_score,
+                        "error_count": error_count_h,
+                        "tps": mean([v for v in tps_h if v is not None]) if any(v is not None for v in tps_h) else None,
+                        "elapsed": fmt_eta(elapsed_h_seconds),
+                        "rating": rating_h,
+                        "agent_fit": agent_fit_h,
+                        "expected_success": fmt_eta(expected_success_h) if expected_success_h is not None else "",
+                    }
+                )
+            history_run_summary_rows.sort(
+                key=lambda r: (str(r["last_update"]), str(r["benchmark"]), str(r["backend"]), str(r["model"]))
+            )
         except OSError:
             history_summary_rows = []
+            history_run_summary_rows = []
 
     def fmt(v: Optional[float], digits: int = 2) -> str:
         return f"{v:,.{digits}f}" if v is not None else ""
@@ -2607,8 +3041,32 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
 
     sortable_assets = [
         "<style>",
+        ":root { color-scheme: dark; --bg: #08111f; --panel: #101c2e; --panel-alt: #16253b; --line: #29425f; --text: #e8f0fa; --muted: #9eb1c9; --cyan: #38bdf8; --green: #34d399; --amber: #fbbf24; --red: #fb7185; }",
+        "* { box-sizing: border-box; }",
+        "body { margin: 0; padding: 28px; background: radial-gradient(circle at top right, #12385b 0, var(--bg) 42rem); color: var(--text); font: 14px/1.45 'Segoe UI', Arial, sans-serif; }",
+        "h1 { margin: 0; font-size: 30px; letter-spacing: .02em; }",
+        "h2 { margin: 30px 0 12px; font-size: 19px; }",
+        ".dashboard-header { padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(135deg, #132844, var(--panel)); box-shadow: 0 18px 45px rgba(0, 0, 0, .25); }",
+        ".dashboard-subtitle { margin: 8px 0 0; color: var(--muted); }",
+        ".kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; margin: 18px 0 8px; }",
+        ".kpi-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(16, 28, 46, .88); }",
+        ".kpi-label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .07em; }",
+        ".kpi-value { display: block; margin-top: 5px; color: var(--cyan); font-size: 19px; font-weight: 700; }",
+        ".table-frame { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .18); }",
+        "table { width: 100%; min-width: 1780px; border-collapse: collapse; }",
+        "th { position: sticky; top: 0; z-index: 1; padding: 12px 10px; background: #1d3655; color: #f8fbff; border-bottom: 2px solid #3b82b6; text-align: left; white-space: nowrap; }",
+        "td { padding: 10px; border-bottom: 1px solid rgba(41, 66, 95, .72); color: #d9e5f3; vertical-align: top; }",
+        "tbody tr:nth-child(even) { background: rgba(22, 37, 59, .56); }",
+        "tbody tr:hover { background: rgba(56, 189, 248, .12); }",
+        ".status { display: inline-block; min-width: 92px; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; text-align: center; text-transform: uppercase; letter-spacing: .04em; }",
+        ".status-running { background: rgba(56, 189, 248, .2); color: #7dd3fc; border: 1px solid #0ea5e9; }",
+        ".status-scheduled { background: rgba(148, 163, 184, .16); color: #cbd5e1; border: 1px solid #64748b; }",
+        ".status-done { background: rgba(52, 211, 153, .16); color: #6ee7b7; border: 1px solid #10b981; }",
+        ".status-error, .status-running-error { background: rgba(251, 113, 133, .16); color: #fda4af; border: 1px solid #fb7185; }",
+        ".status-not-configured { background: rgba(251, 191, 36, .15); color: #fde68a; border: 1px solid #f59e0b; }",
+        "@media (max-width: 900px) { body { padding: 14px; } .kpi-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); } }",
         ".table-filter-wrap { margin: 6px 0 8px 0; }",
-        ".table-filter-input { min-width: 260px; max-width: 420px; padding: 4px 8px; }",
+        ".table-filter-input { min-width: 260px; max-width: 420px; padding: 7px 10px; color: var(--text); background: var(--panel-alt); border: 1px solid var(--line); border-radius: 8px; }",
         "table.sortable thead th { cursor: pointer; user-select: none; }",
         "table.sortable thead th.sort-asc::after { content: ' ▲'; }",
         "table.sortable thead th.sort-desc::after { content: ' ▼'; }",
@@ -2939,6 +3397,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             "progress": f"{done_count}/{total_count}",
             "done_count": done_count,
             "total_count": total_count,
+            "error_count": int(sm["error_count"]) if (sm and sm.get("error_count") is not None) else err_count,
             "elapsed_seconds": elapsed_seconds,
             "elapsed": fmt_eta(elapsed_seconds),
             "eta_left": str(sm["eta_left"]) if sm else "",
@@ -2954,6 +3413,15 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             "llm_startuptime": float(sm["local_startup_s"]) if (sm and sm.get("local_startup_s") is not None) else None,
             "llm_shutdowntime": float(sm["local_shutdown_s"]) if (sm and sm.get("local_shutdown_s") is not None) else None,
             "rating": str(sm["note"]) if sm else "",
+            "schema_version": str(sm.get("schema_version", CSV_SCHEMA_VERSION)) if sm else CSV_SCHEMA_VERSION,
+            "status": str(sm.get("status", model_status)) if sm else model_status,
+            "run_started_at": str(sm.get("run_started_at", "")) if sm else "",
+            "run_finished_at": str(sm.get("run_finished_at", "")) if sm else "",
+            "hardware_profile": str(sm.get("hardware_profile", "")) if sm else "",
+            "provenance": str(sm.get("provenance", "")) if sm else "",
+            "llm_size_bytes": sm.get("llm_size_bytes") if sm else None,
+            "elapsed_p50_ms": sm.get("elapsed_p50_ms") if sm else None,
+            "elapsed_p95_ms": sm.get("elapsed_p95_ms") if sm else None,
         }
 
     planned_models_by_backend: Dict[str, Set[str]] = {"siemens": set(), "ollama": set(), "llama_cpp": set()}
@@ -3008,6 +3476,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
                 "progress": "0/33" if status == "scheduled" else "n/a",
                 "done_count": 0,
                 "total_count": 0,
+                "error_count": 0,
                 "elapsed_seconds": None,
                 "elapsed": "",
                 "eta_left": "",
@@ -3126,6 +3595,13 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
         return (2, plan_epoch, 0.0, str(row.get("backend", "")), str(row.get("model", "")))
 
     model_live_rows.sort(key=live_row_sort_key)
+    run_summary_rows = history_run_summary_rows or [
+        row
+        for row in model_live_rows
+        if int(row.get("done_count") or 0) > 0
+        or int(row.get("error_count") or 0) > 0
+        or bool(row.get("run_started"))
+    ]
 
     chart_name = "benchmark_models_overview.svg"
     chart_path = os.path.join(report_dir, chart_name) if report_dir else chart_name
@@ -3133,6 +3609,43 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     lines.append("## Model runtime and heuristik-score chart")
     lines.append("")
     lines.append(f'<img src="{html.escape(chart_name)}" alt="Model runtime and heuristik-score chart" />')
+    lines.append("")
+
+    lines.append("## Benchmark run overview")
+    lines.append("")
+    lines.append("One row per benchmark run. This compact history is retained across report updates; the live-status view below provides scheduling and ETA detail.")
+    lines.append("")
+    lines.append("<table>")
+    lines.append("<thead><tr><th>Date/time</th><th>Backend</th><th>Model</th><th>Profile</th><th>Launch parameters</th><th>Benchmark name</th><th>Samples x/n</th><th>GPU%(avg)</th><th>CPU%(avg)</th><th>VRAM GB(avg)</th><th>RAM GB(proc avg)</th><th>IO read</th><th>IO write</th><th>Score</th><th>Rating score</th><th>Errors</th><th>Tok/s</th><th>Elapsed</th><th>Rating</th><th>Expected success</th><th>Agent suitability</th></tr></thead>")
+    lines.append("<tbody>")
+    for row in run_summary_rows:
+        measured_at = str(row["last_update"] or row["run_started"] or row["planned_start"])
+        lines.append(
+            "<tr>"
+            f"<td>{html.escape(fmt_clock_or_date(measured_at, report_day))}</td>"
+            f"<td>{html.escape(str(row['backend']))}</td>"
+            f"<td>{html.escape(str(row['model']))}</td>"
+            f"<td>{html.escape(str(row.get('launch_profile', '')))}</td>"
+            f"<td><details><summary>show</summary><code>{html.escape(str(row.get('launch_params', '')))}</code></details></td>"
+            f"<td>{html.escape(str(row['benchmark']))}</td>"
+            f"<td>{html.escape(str(row['progress']))}</td>"
+            f"<td>{fmt(row['avg_gpu'])}</td>"
+            f"<td>{fmt(row['avg_cpu'])}</td>"
+            f"<td>{fmt(row['used_vram_gb'])}</td>"
+            f"<td>{fmt(row['used_ram_gb'])}</td>"
+            f"<td>{fmt(row.get('io_read'), 0)}</td>"
+            f"<td>{fmt(row.get('io_write'), 0)}</td>"
+            f"<td>{fmt(row['score'])}</td>"
+            f"<td>{fmt(row.get('rating_score'))}</td>"
+            f"<td>{int(row['error_count'] or 0)}</td>"
+            f"<td>{fmt(row['tps'])}</td>"
+            f"<td>{html.escape(str(row['elapsed']))}</td>"
+            f"<td>{html.escape(str(row['rating']))}</td>"
+            f"<td>{html.escape(str(row.get('expected_success', '')))}</td>"
+            f"<td>{html.escape(str(row.get('agent_fit', '')))}</td>"
+            "</tr>"
+        )
+    lines.append("</tbody></table>")
     lines.append("")
 
     lines.append("## Live benchmark status")
@@ -3202,20 +3715,150 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
     if history_section_lines:
         lines.extend(history_section_lines)
 
+    overview_start = lines.index("## Benchmark run overview")
+    live_start = lines.index("## Live benchmark status")
+    raw_start = lines.index("## Raw metrics per test")
+    summary_lines = lines[:live_start] + lines[raw_start:]
+    live_lines = lines[:overview_start] + lines[live_start:raw_start]
+
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write("\n".join(summary_lines))
+
+    live_report_path = os.path.join(report_dir, "benchmark_live_status.md")
+    with open(live_report_path, "w", encoding="utf-8") as flive:
+        flive.write("\n".join(live_lines))
+
+    summary_csv_path = os.path.join(report_dir, "benchmark_run_summary.csv")
+    summary_csv_columns = [
+        "schema_version",
+        "status",
+        "run_started_at",
+        "run_finished_at",
+        "hardware_profile",
+        "provenance",
+        "launch_profile",
+        "server_executable",
+        "model_path",
+        "launch_params",
+        "llm_size_bytes",
+        "date_time",
+        "backend",
+        "model",
+        "benchmark_name",
+        "samples_x_n",
+        "avg_gpu_percent",
+        "avg_cpu_percent",
+        "vram_gb",
+        "pcie_rx_avg_mb_s",
+        "pcie_rx_max_mb_s",
+        "pcie_tx_avg_mb_s",
+        "pcie_tx_max_mb_s",
+        "io_read",
+        "io_write",
+        "ram_gb",
+        "score",
+        "rating_score",
+        "errors",
+        "tokens_per_second",
+        "elapsed",
+        "elapsed_p50_ms",
+        "elapsed_p95_ms",
+        "rating",
+        "expected_success",
+        "agent_suitability",
+    ]
+    with open(summary_csv_path, "w", newline="", encoding="utf-8") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=summary_csv_columns)
+        writer.writeheader()
+        for row in run_summary_rows:
+            measured_at = str(row["last_update"] or row["run_started"] or row["planned_start"])
+            writer.writerow(
+                {
+                    "schema_version": row.get("schema_version", CSV_SCHEMA_VERSION),
+                    "status": row.get("status", ""),
+                    "run_started_at": row.get("run_started_at", row.get("run_started", "")),
+                    "run_finished_at": row.get("run_finished_at", row.get("last_update", "")),
+                    "hardware_profile": row.get("hardware_profile", ""),
+                    "provenance": row.get("provenance", ""),
+                    "launch_profile": row.get("launch_profile", ""),
+                    "server_executable": row.get("server_executable", ""),
+                    "model_path": row.get("model_path", ""),
+                    "launch_params": row.get("launch_params", ""),
+                    "llm_size_bytes": row.get("llm_size_bytes"),
+                    "date_time": measured_at,
+                    "backend": row["backend"],
+                    "model": row["model"],
+                    "benchmark_name": row["benchmark"],
+                    "samples_x_n": row["progress"],
+                    "avg_gpu_percent": row["avg_gpu"],
+                    "avg_cpu_percent": row["avg_cpu"],
+                    "vram_gb": row["used_vram_gb"],
+                    "pcie_rx_avg_mb_s": row.get("pcie_rx_mb_s", row.get("avg_pcie_rx_mb_s")),
+                    "pcie_rx_max_mb_s": row.get("pcie_rx_max_mb_s"),
+                    "pcie_tx_avg_mb_s": row.get("pcie_tx_mb_s", row.get("avg_pcie_tx_mb_s")),
+                    "pcie_tx_max_mb_s": row.get("pcie_tx_max_mb_s"),
+                    "io_read": row.get("io_read"),
+                    "io_write": row.get("io_write"),
+                    "ram_gb": row["used_ram_gb"],
+                    "score": row["score"],
+                    "rating_score": row.get("rating_score"),
+                    "errors": row["error_count"],
+                    "tokens_per_second": row["tps"],
+                    "elapsed": row["elapsed"],
+                    "elapsed_p50_ms": row.get("elapsed_p50_ms"),
+                    "elapsed_p95_ms": row.get("elapsed_p95_ms"),
+                    "rating": row["rating"],
+                    "expected_success": row.get("expected_success", ""),
+                    "agent_suitability": row.get("agent_fit", ""),
+                }
+            )
 
     report_html_path = report_path[:-3] + ".html" if report_path.lower().endswith(".md") else (report_path + ".html")
     html_lines: List[str] = []
     html_lines.append("<!doctype html>")
-    html_lines.append("<html><head><meta charset=\"utf-8\"><title>Benchmark Report</title></head><body>")
-    html_lines.append("<h1>Benchmark Report</h1>")
-    html_lines.append(f"<p><b>Generated:</b> {html.escape(generated)}</p>")
-    html_lines.append(f"<p><b>Overall progress:</b> {html.escape(progress_display)}</p>")
-    html_lines.append(f"<p><b>Overall ETA left:</b> {html.escape(fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else 'n/a')}</p>")
-    html_lines.append(f"<p><b>Overall ETA end:</b> {html.escape(overall_eta_end if overall_eta_end else 'n/a')}</p>")
-    html_lines.append("<h2>Live benchmark status</h2>")
-    html_lines.append("<table class=\"sortable\" id=\"live-status-table\">")
+    html_lines.append("<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Benchmark Report</title></head><body>")
+    html_lines.append("<header class=\"dashboard-header\"><h1>Benchmark Control Center</h1><p class=\"dashboard-subtitle\">Live progress, resource telemetry, and estimated completion.</p></header>")
+    html_lines.append("<section class=\"kpi-grid\">")
+    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Generated</span><strong class=\"kpi-value\">{html.escape(generated)}</strong></div>")
+    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Overall progress</span><strong class=\"kpi-value\">{html.escape(progress_display)}</strong></div>")
+    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">ETA left</span><strong class=\"kpi-value\">{html.escape(fmt_eta(overall_eta_seconds) if overall_eta_seconds is not None else 'n/a')}</strong></div>")
+    html_lines.append(f"<div class=\"kpi-card\"><span class=\"kpi-label\">Estimated finish</span><strong class=\"kpi-value\">{html.escape(overall_eta_end if overall_eta_end else 'n/a')}</strong></div>")
+    html_lines.append("</section>")
+    html_lines.append("<h2>Benchmark run overview</h2>")
+    html_lines.append("<p>One row per benchmark run. This compact history is retained across report updates; the live-status view below provides scheduling and ETA detail.</p>")
+    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\" id=\"run-overview-table\">")
+    html_lines.append("<thead><tr><th>Date/time</th><th>Backend</th><th>Model</th><th>Profile</th><th>Launch parameters</th><th>Benchmark name</th><th>Samples x/n</th><th>GPU%(avg)</th><th>CPU%(avg)</th><th>VRAM GB(avg)</th><th>RAM GB(proc avg)</th><th>IO read</th><th>IO write</th><th>Score</th><th>Rating score</th><th>Errors</th><th>Tok/s</th><th>Elapsed</th><th>Rating</th><th>Expected success</th><th>Agent suitability</th></tr></thead>")
+    html_lines.append("<tbody>")
+    for row in run_summary_rows:
+        measured_at = str(row["last_update"] or row["run_started"] or row["planned_start"])
+        html_lines.append(
+            "<tr>"
+            f"<td>{html.escape(fmt_clock_or_date(measured_at, report_day))}</td>"
+            f"<td>{html.escape(str(row['backend']))}</td>"
+            f"<td>{html.escape(str(row['model']))}</td>"
+            f"<td>{html.escape(str(row.get('launch_profile', '')))}</td>"
+            f"<td><details><summary>show</summary><code>{html.escape(str(row.get('launch_params', '')))}</code></details></td>"
+            f"<td>{html.escape(str(row['benchmark']))}</td>"
+            f"<td>{html.escape(str(row['progress']))}</td>"
+            f"<td>{fmt(row['avg_gpu'])}</td>"
+            f"<td>{fmt(row['avg_cpu'])}</td>"
+            f"<td>{fmt(row['used_vram_gb'])}</td>"
+            f"<td>{fmt(row['used_ram_gb'])}</td>"
+            f"<td>{fmt(row.get('io_read'), 0)}</td>"
+            f"<td>{fmt(row.get('io_write'), 0)}</td>"
+            f"<td>{fmt(row['score'])}</td>"
+            f"<td>{fmt(row.get('rating_score'))}</td>"
+            f"<td>{int(row['error_count'] or 0)}</td>"
+            f"<td>{fmt(row['tps'])}</td>"
+            f"<td>{html.escape(str(row['elapsed']))}</td>"
+            f"<td>{html.escape(str(row['rating']))}</td>"
+            f"<td>{html.escape(str(row.get('expected_success', '')))}</td>"
+            f"<td>{html.escape(str(row.get('agent_fit', '')))}</td>"
+            "</tr>"
+        )
+    html_lines.append("</tbody></table></div>")
+    html_lines.append("<h2>Current benchmark series status / planned runs</h2>")
+    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\" id=\"live-status-table\">")
     html_lines.append("<thead><tr><th>Benchmark</th><th>Backend</th><th>Model</th><th>Status</th><th>Planned start</th><th>Run started</th><th>Last update</th><th>Progress</th><th>Elapsed time</th><th>Elapsed left (est.)</th><th>ETA end</th><th>LLM start<br>(s)</th><th>LLM stop<br>(s)</th><th>Heuristik-Score</th><th>Gesamtbewertung</th><th>Tok/s</th><th>CPU%(avg)</th><th>GPU%(avg)</th><th>RAM GB(proc avg)</th><th>VRAM GB(avg)</th><th>Wall-s(avg)</th></tr></thead>")
     html_lines.append("<tbody>")
     for row in model_live_rows:
@@ -3224,7 +3867,7 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             f"<td>{html.escape(str(row['benchmark']))}</td>"
             f"<td>{html.escape(str(row['backend']))}</td>"
             f"<td>{html.escape(str(row['model']))}</td>"
-            f"<td>{html.escape(str(row['status']))}</td>"
+            f"<td><span class=\"status status-{html.escape(str(row['status']).lower().replace(' ', '-'))}\">{html.escape(str(row['status']))}</span></td>"
             f"<td>{html.escape(fmt_clock_or_date(str(row['planned_start']), report_day))}</td>"
             f"<td>{html.escape(fmt_clock_or_date(str(row['run_started']), report_day))}</td>"
             f"<td>{html.escape(fmt_clock_or_date(str(row['last_update']), report_day))}</td>"
@@ -3244,22 +3887,43 @@ def update_markdown_report(results_dir: str, report_path: str, args: Optional[ar
             f"<td>{fmt(row['wall_s'], 2)}</td>"
             "</tr>"
         )
-    html_lines.append("</tbody></table>")
+    html_lines.append("</tbody></table></div>")
     html_lines.append("<h2>Raw metrics per test</h2>")
-    html_lines.append("<table class=\"sortable\">")
+    html_lines.append("<div class=\"table-frame\"><table class=\"sortable\">")
     html_lines.append("<thead><tr>" + "".join(f"<th>{html.escape(col)}</th>" for col in (["_file"] + header)) + "</tr></thead>")
     html_lines.append("<tbody>")
     for row in all_rows:
         html_lines.append(
             "<tr>" + "".join(f"<td>{html.escape(str(row.get(col, '')))}</td>" for col in (["_file"] + header)) + "</tr>"
         )
-    html_lines.append("</tbody></table>")
+    html_lines.append("</tbody></table></div>")
     if history_section_lines:
         html_lines.extend(history_section_lines)
     html_lines.extend(sortable_assets)
     html_lines.append("</body></html>")
+    overview_html_start = html_lines.index("<h2>Benchmark run overview</h2>")
+    live_html_start = html_lines.index("<h2>Current benchmark series status / planned runs</h2>")
+    raw_html_start = html_lines.index("<h2>Raw metrics per test</h2>")
+    history_html_lines = list(history_section_lines)
+    if history_html_lines and history_html_lines[0].startswith("## "):
+        history_html_lines[0] = "<h2>Completed-run history</h2>"
+    summary_html_lines = (
+        html_lines[:overview_html_start]
+        + html_lines[live_html_start:raw_html_start]
+        + history_html_lines
+        + sortable_assets
+        + ["</body></html>"]
+    )
+    live_html_lines = html_lines[:overview_html_start] + html_lines[live_html_start:raw_html_start] + sortable_assets + [
+        "</body></html>"
+    ]
+
     with open(report_html_path, "w", encoding="utf-8") as fhtml:
-        fhtml.write("\n".join(html_lines))
+        fhtml.write("\n".join(summary_html_lines))
+
+    live_report_html_path = os.path.join(report_dir, "benchmark_live_status.html")
+    with open(live_report_html_path, "w", encoding="utf-8") as flive_html:
+        flive_html.write("\n".join(live_html_lines))
 
     detail_lines: List[str] = []
     detail_lines.append("# Benchmark Detailed Live Status")
@@ -3512,7 +4176,12 @@ def main() -> int:
                                     continue
                                 print(f"[ollama] {model} | {case['id']} | run {run_id}")
                                 result = run_ollama_case(model, case, run_id, args)
+                                stamp_launch_metadata(result, args, "ollama")
                                 result.local_model_startup_sec = startup_sec
+                                result.llm_size_bytes = ollama_model_size_bytes(model)
+                                result.status = "error" if result.error else "measured"
+                                result.run_started_at = result.recorded_at
+                                result.run_finished_at = result.recorded_at
                                 results.append(apply_benchmark_metadata(result, benchmark_meta))
                                 model_result_indexes.append(len(results) - 1)
                                 if not (result.error or "").strip():
@@ -3554,6 +4223,12 @@ def main() -> int:
                                 apply_benchmark_metadata(r, benchmark_meta)
                                 for r in run_llama_server_model(args.llama_server, model_name, model_path, args, completed_keys=completed_keys)
                             ]
+                            model_size = os.path.getsize(model_path) if os.path.isfile(model_path) else None
+                            for row in model_results:
+                                row.llm_size_bytes = model_size
+                                row.status = "error" if row.error else "measured"
+                                row.run_started_at = row.recorded_at
+                                row.run_finished_at = row.recorded_at
                             for row in model_results:
                                 print(f"[llama_cpp/server] {model_name} | {row.case_id} | run {row.run}")
                                 if not (row.error or "").strip():
@@ -3578,6 +4253,10 @@ def main() -> int:
                                         continue
                                     print(f"[llama_cpp/cli] {model_name} | {case['id']} | run {run_id}")
                                     result = run_llama_cpp_case(model_name, model_path, case, run_id, args)
+                                    result.llm_size_bytes = os.path.getsize(model_path) if os.path.isfile(model_path) else None
+                                    result.status = "error" if result.error else "measured"
+                                    result.run_started_at = result.recorded_at
+                                    result.run_finished_at = result.recorded_at
                                     results.append(apply_benchmark_metadata(result, benchmark_meta))
                                     if not (result.error or "").strip():
                                         completed_keys.add(("llama_cpp", model_name, str(case["id"]), run_id))
@@ -3614,6 +4293,9 @@ def main() -> int:
                     mdl, case_id, run_id = futures[future]
                     try:
                         done_row = apply_benchmark_metadata(future.result(), benchmark_meta)
+                        done_row.status = "error" if done_row.error else "measured"
+                        done_row.run_started_at = done_row.recorded_at
+                        done_row.run_finished_at = done_row.recorded_at
                         siemens_buf.append(done_row)
                         results.append(done_row)
                         if not (done_row.error or "").strip():

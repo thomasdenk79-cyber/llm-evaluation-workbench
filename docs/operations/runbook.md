@@ -1,5 +1,301 @@
 # Runbook: LLM Benchmark Campaign
 
+## Verbindlicher CSV-Vertrag
+
+Für **jeden** Benchmark-Run gilt ein universelles CSV-Format: Die Detail-CSV
+enthält jede Probe mit `sample_id`/`sample_name`, `score`, `elapsed`,
+`errors`, numerischer `rating`, qualitativer `agent_suitability` sowie
+`io_read` und `io_write`. Die aggregierte Summary-CSV enthält genau eine Zeile
+je Benchmark-Run (gruppiert nach Benchmark, Backend und Modell) und dieselben
+Run-Metriken einschließlich der IO-Summen. IO wird über die vorhandene
+Prozess-/Systemüberwachung erfasst; wenn der Backend keine belastbare Messung
+liefert, bleibt das Feld explizit leer bzw. `N/A` (niemals schätzen).
+Die Detail-CSV bleibt die exakte Prüfspur; HTML zeigt nur Run-Aggregate.
+
+### ik_llama.cpp-Profile und MTP
+
+ik_llama.cpp wird über denselben Benchmark-Einstiegspunkt wie alle anderen
+lokalen Backends getestet. Das Profil `baseline` erzwingt den bisherigen
+stabilen vollständigen CPU-MoE-Offload. Für Performance-Vergleiche stehen
+zusätzlich `fit` (automatisches VRAM-Fitting) und `n-cpu-moe` (nur die ersten
+N MoE-Layer im CPU-Speicher) zur Verfügung:
+
+```powershell
+python .\scripts\llm_migration_benchmark.py `
+  --llama-server "C:\Users\z000g9hu\llama.cpp-ik\build-cuda-v133-clean\bin\Release\llama-server.exe" `
+  --ik-offload-profile fit --llama-fit-target-mib 1664 `
+  --ik-spec-type "mtp:n_max=1,p_min=0.0"
+```
+
+Die kanonische ik-Syntax für speculative decoding ist `--spec-type`; die
+alten Optionen `--multi-token-prediction`, `--draft-p-min` und `--draft-max`
+gehören nicht zum geprüften Commit und dürfen nicht erfunden oder als
+unterstützt dokumentiert werden. `mtp` funktioniert nur mit einem GGUF, das
+einen MTP-Head enthält. Fehlt dieser Head, wird der Lauf als nicht
+vergleichbar/fehlgeschlagen protokolliert; ein normales Q4-GGUF wird nicht
+nachträglich als MTP-Modell behandelt.
+
+### RTX 3500 Ada / 12-GB-VRAM: bekannte Fehlkonfigurationen
+
+Auf dem ThinkPad P16 Gen 2 sind nominell 12282 MiB VRAM vorhanden, aber
+Windows, der Desktop-Compositor, Treiber-Reserven und CUDA belegen davon
+typischerweise 1--2 GiB. Das Ziel ist deshalb **nicht**, 12282 MiB zu
+erzwingen, sondern unter Last ungefähr 10--10.5 GiB für das Modell und KV
+Cache zu verwenden. Für lange OpenCode-Sitzungen bleiben mindestens etwa
+1.5--2 GiB frei.
+
+Die bisherigen Fehlkonfigurationen waren:
+
+| Einstellung | Beobachtung | Konsequenz |
+|---|---|---|
+| `--ik-offload-profile baseline` / `--override-tensor exps=CPU` | nur ca. 3.8 GiB VRAM, ca. 19.3 Tok/s | stabil, aber die MoE-Experten werden unnötig aus dem GPU-Speicher herausgehalten |
+| `--ik-offload-profile n-cpu-moe --ik-n-cpu-moe 16` | ca. 11.5 GiB VRAM, PCIe-Transfers und nur ca. 7.8 Tok/s | kein gutes Profil: Expertentransfers erzeugen Transfer-Thrashing |
+| `--llama-ngl 0` oder fehlendes `--llama-ngl` | GPU-Offload ist deaktiviert bzw. nicht reproduzierbar | für jeden GPU-Vergleich `--llama-ngl 100` explizit setzen |
+| `--fit-margin 2048` als Einzelentscheidung | ca. 9.9 GiB, aber ein Ausreißer mit ca. 13.7 Tok/s | nicht aus einem Einzelrun als Standard ableiten; mindestens drei Wiederholungen |
+| volles `f16`-KV bei großem Kontext | unnötig hoher VRAM-Bedarf und spätere OOM-Gefahr | für 12 GiB `q8_0`-KV und zunächst 32768 Kontext verwenden |
+
+`fit` ist das bevorzugte Startprofil. Auf dieser GPU ist
+`--fit-margin 1664` der bisher beste reproduzierte Kompromiss (KAT:
+ca. 10.26 GiB und ca. 25.3 Tok/s). Ein niedrigerer GPU-Auslastungswert als
+90 % ist dabei kein Fehlerbeweis: Decode ist häufig speicherbandbreiten- oder
+CPU-/PCIe-limitiert. Entscheidend sind Tok/s, VRAM-Stabilität, PCIe-Spitzen
+und fehlende OOM-/Paging-Ereignisse. 90 % GPU-Auslastung darf als Diagnose-
+signal aufgezeichnet werden, aber nicht als Zielwert erzwungen werden.
+
+Empfohlenes reproduzierbares Startprofil für diesen Rechner:
+
+```powershell
+--ctx-size 32768 --llama-ngl 100 --threads 16 `
+--llama-batch-size 512 --llama-ubatch-size 128 `
+--ik-offload-profile fit --llama-fit-target-mib 1664
+```
+
+Für OpenCode mit wachsendem Kontext sind danach separate 8192/32768/65536-
+und 131072-Tests nötig. Ein erfolgreicher Kurzlauf beweist keine
+Langzeitstabilität. Modelle, die deutlich größer als der verfügbare VRAM
+sind (z. B. Q8/BF16), werden nicht als VRAM-stabile Daily-Runner empfohlen:
+sie können zwar in 200 GiB RAM laden, verursachen aber CPU-Offload und
+langsames Paging/Transferverhalten.
+
+### ik_llama.cpp unter Windows mit CUDA bauen
+
+Den Fork immer in einem eigenen Build-Verzeichnis bauen; funktionierende
+Builds wie `build-cuda-v133-clean` nicht überschreiben. Vor dem Build muss
+`nvcc` aus derselben CUDA-Installation gefunden werden, die später auch im
+DLL-Pfad des Servers liegt.
+
+```powershell
+cd C:\Users\z000g9hu\llama.cpp-ik
+$env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64;" + $env:PATH
+$build = "build-cuda-v133-<name>"
+
+cmake -S . -B $build -G "Visual Studio 17 2022" -A x64 `
+  -DGGML_CUDA=ON `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCUDAToolkit_ROOT="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3"
+cmake --build $build --config Release --target llama-server llama-bench --parallel 8
+
+$env:PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3\bin\x64;" + $env:PATH
+& ".\$build\bin\Release\llama-server.exe" --version
+& ".\$build\bin\Release\llama-server.exe" --help |
+  Select-String "fit|fit-margin|n-cpu-moe|spec-type"
+```
+
+Abnahmebedingungen: `--version` muss den erwarteten Fork-Commit nennen,
+`--help` muss die kanonischen ik-Optionen zeigen, und der Startlog muss
+CUDA/GPU-BLAS bestätigen. Ein Build mit
+`CUDAToolkit_NVCC_EXECUTABLE-NOTFOUND`, `cuda=false` oder `gpu_blas=false`
+ist CPU-only und darf nicht in den GPU-Vergleich eingehen.
+
+### Schema, Granularität und Spalten
+
+Es gibt zwei verbindliche Körnungen, aber keinen dritten proprietären
+Ergebnisexport:
+
+- **Sample-/Detail-CSV:** genau eine Zeile je ausgeführtem
+  `benchmark_run_id + backend + model + case_id + run`. Auch Fehler,
+  Timeouts und übersprungene Samples werden als Zeile gespeichert.
+- **Run-/Summary-CSV:** genau eine Zeile je abgeschlossenem oder aktuell
+  laufendem `benchmark_run_id + backend + model + benchmark_name`. Diese
+  Zeile wird aus der Detail-CSV aggregiert; Zahlen dürfen im HTML nicht
+  unabhängig davon neu erfunden werden.
+
+Die verbindliche Detail-/History-Reihenfolge des Migrationsformats ist
+(History ergänzt vorne `source_csv`; alle übrigen Spalten sind identisch):
+
+```text
+benchmark_run_id, benchmark_name, benchmark_spec_version,
+benchmark_script_file, benchmark_task_count, benchmark_runs,
+benchmark_task_ids, benchmark_task_hash, backend, model, sample_id,
+sample_name, case_id, case_title, run, wall_ms, elapsed_p50_ms,
+elapsed_p95_ms, prompt_tokens,
+output_tokens, output_tps, quality_score, keyword_hits, keyword_total,
+forbidden_hits, avg_cpu_pct, max_cpu_pct, avg_mem_pct, max_mem_pct,
+avg_gpu_pct, max_gpu_pct, avg_vram_used_mb, max_vram_used_mb,
+avg_pcie_rx_mb_s, max_pcie_rx_mb_s, avg_pcie_tx_mb_s, max_pcie_tx_mb_s,
+io_read, io_write, local_model_startup_sec, local_model_shutdown_sec,
+cpu_time_sec, recorded_at, status, run_started_at, run_finished_at,
+hardware_profile, provenance, launch_profile, server_executable, model_path,
+launch_params, rating, agent_suitability, output_preview, error
+```
+
+`migration_llm_bench_history.csv` beginnt zusätzlich mit `source_csv`.
+`elapsed_p50_ms` und `elapsed_p95_ms` sind auf Sample-Zeilen leer und werden
+in Run-Summaries aus erfolgreich gemessenen `wall_ms`-Werten berechnet.
+
+Die verbindliche Run-/Summary-Reihenfolge ist:
+
+```text
+schema_version, status, run_started_at, run_finished_at, hardware_profile,
+provenance, launch_profile, server_executable, model_path, launch_params,
+llm_size_bytes, date_time, backend, model, benchmark_name, samples_x_n,
+avg_gpu_percent, avg_cpu_percent, vram_gb,
+pcie_rx_avg_mb_s, pcie_rx_max_mb_s, pcie_tx_avg_mb_s, pcie_tx_max_mb_s,
+io_read, io_write, ram_gb, score, rating_score, errors,
+tokens_per_second, elapsed, elapsed_p50_ms, elapsed_p95_ms, rating,
+expected_success, agent_suitability
+```
+
+`sample_id` ist stabil und eindeutig; `sample_name` ist der lesbare
+Benchmark-/Taskname. `score`/`quality_score` beschreibt die fachliche
+Qualität, `rating_score` ist die normalisierte Gesamtbewertung des Runs,
+`rating` die lesbare Einstufung und `agent_suitability` die separate
+Agenten-Einschätzung. `elapsed`/`wall_ms` sind End-to-End-Wandzeit,
+`errors` zählt technische Fehler, `io_read`/`io_write` sind gemessene Bytes
+des lokalen Modellprozesses. Nicht messbare Werte bleiben `N/A` bzw. leer;
+`0` ist nur ein tatsächlich gemessener Nullwert. PCIe-Werte sind
+Momentanraten in MB/s und tragen deshalb ihre Einheit im Spaltennamen.
+`launch_params` ist ein sortiertes JSON-Objekt mit Kontextgröße, Threads,
+Batch-/Ubatch-Größe, GPU-Layern, KV-Cache-Typen, Flash-Attention,
+Continuous-Batching, Offload-Profil, Fit-Margin, `n-cpu-moe`, MTP-
+`spec_type` und Speculative-Autotuning. Damit bleibt nachvollziehbar, ob
+ein Modell über Ollama, Upstream-llama.cpp oder ik_llama.cpp mit MTP oder
+ohne MTP gestartet wurde.
+
+Alle neuen Spalten werden ausschließlich additiv ergänzt. Reihenfolge,
+Bedeutung und Einheiten bleiben stabil; eine inkompatible Änderung erhält
+eine neue `benchmark_spec_version`. Historische CSVs werden nur lesbar
+importiert und nicht stillschweigend umgedeutet.
+
+Diese Spalten sind additive Erweiterungen. Beim ersten Schreiben werden alte
+History-Dateien migriert, indem fehlende Spalten leer ergänzt werden; unbekannte
+historische Spalten bleiben erhalten. Historische Messwerte werden nicht
+rückwirkend erfunden.
+
+### Top-level dispatcher
+
+Der kanonische Einstieg ist beispielsweise:
+
+```powershell
+python .\scripts\run_benchmark.py migration --backend ollama --runs 1
+python .\scripts\run_benchmark.py agent-helper dry-run --campaign-id dry-run-<date>
+```
+
+`run_benchmark.py` wählt nur Suite/Runner und delegiert alle weiteren
+Argumente. Die spezialisierten Skripte bleiben absichtlich bestehen: Sie haben
+unterschiedliche Fixtures, Sicherheitsgates, CLI-Verträge und Ergebnisformate
+und werden weiterhin direkt für Tests, Wiederaufnahme und fokussierte Läufe
+benötigt.
+
+### Unified campaign entrypoint (kanonisch)
+
+Für neue Benutzer ist `scripts\run_benchmark.py` der einzige Einstieg. Er
+akzeptiert mehrere Suite-IDs (Komma-getrennt), `ollama`, `llama_cpp` oder
+`both`, explizite Modellnamen und fnmatch-Muster wie `*qwen*`. Ollama-Muster
+werden ausschließlich über `GET /api/tags` aufgelöst; bei Nichterreichbarkeit
+gibt es keinen stillen Fallback. llama.cpp wird als `NAME=PFAD` angegeben.
+Nach jeder Suite werden dieselbe Detail-CSV, Summary-CSV und das dynamische
+HTML-Dashboard aktualisiert.
+
+```powershell
+python .\scripts\run_benchmark.py `
+  --suites migration,ora-pg-py-33 `
+  --backend both `
+  --models "*qwen*,deepseek-coder-v2:16b" `
+  --llama-model "qwen35=C:\MODELLE\qwen35.gguf" `
+  --llama-server "C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe" `
+  --output "C:\GIT\llm-evaluation-workbench\benchmark_results\unified_benchmark_detail.csv"
+```
+
+Alle Optionen können in TOML unter `[benchmark]` stehen. Ohne CLI-Parameter
+wird `config/benchmark.toml` verwendet (Beispieldatei im Repository):
+
+```toml
+[benchmark]
+suites = "migration,ora-pg-py-33"
+backend = "ollama"
+models = ["*qwen*", "deepseek-coder-v2:16b"]
+ollama_url = "http://127.0.0.1:11434"
+runs = 1
+detail_csv = "benchmark_results/unified_benchmark_detail.csv"
+run = "resume" # resume | force
+resume = "auto"
+pause_file = "pause.ini"
+stop_file = "stop.ini"
+lock_file = ".benchmark_master.pid"
+```
+
+Ohne Parameter wird die Default-TOML geladen. `--interactive` öffnet einen
+dependency-freien ANSI-/Nummern-Dialog für Suites, Backend und Modelle;
+Tkinter bleibt als legacy GUI-Fallback verfügbar.
+Die vorhandenen spezialisierten Runner bleiben interne Implementierungen und
+werden vom Master delegiert.
+
+#### Pause, Gaming und Resume
+
+`pause.ini` ist der Pause-Schalter. `python .\scripts\run_benchmark.py --pause`
+legt ihn an; ein aktiver Runner wird beendet, Ollama wird entladen und der
+Master wartet. Nach dem Löschen wird aus der Detail-CSV und den
+`*_inprogress.csv` anhand der geplanten `sample_id`s fortgesetzt.
+`stop.ini` ist dagegen endgültig: `--stop` beendet nur den aktiven Master samt
+seiner eigenen Runner-Prozesshierarchie, entlädt Ollama und beendet die Suite.
+Ein PID-/JSON-Lock verhindert doppelte Master; verwaiste Steuerdateien werden
+beim Start gemeldet und sicher bereinigt.
+
+`run = "force"` startet ohne Löschen bestehender Nutzerdaten mit einer neuen,
+zeitgestempelten Detail-CSV. `--list-models` zeigt installierte Ollama-Tags und
+`--pull-ollama NAME` zieht nur den ausdrücklich genannten Tag. Für llama.cpp
+akzeptiert `--llama-install NAME=PFAD` ausschließlich eine vorhandene GGUF;
+es gibt keine erfundenen URLs oder stillen Downloads. Fehlt ein Programm,
+werden Installationshinweise ausgegeben.
+
+Ein Rechnerabsturz hat denselben vorgesehenen Wiederanlauf: den gleichen
+Master-Befehl erneut starten, dieselbe Detail-CSV und dasselbe
+`.master_runs`-Verzeichnis beibehalten. Ein explizites `--resume off` beginnt
+bewusst einen neuen Lauf.
+
+#### HWiNFO (bewusst opt-in)
+
+Es werden keine HWiNFO-Schalter oder undokumentierten Parameter erfunden.
+Optional können exakt die vom Benutzer getesteten Start-/Stop-Kommandos
+konfiguriert werden. `{executable}` wird durch `hwinfo_executable` ersetzt:
+
+```toml
+[benchmark]
+hwinfo_executable = "C:\\Tools\\HWiNFO64.exe"
+hwinfo_start_command = '"{executable}" <documented-start-arguments>'
+hwinfo_stop_command = '"{executable}" <documented-stop-arguments>'
+```
+
+Die Kommandos werden vor bzw. nach jeder Suite ausgeführt; ohne beide
+Kommandos findet keine HWiNFO-Aktion statt. Die konkreten Argumente müssen aus
+der installierten HWiNFO-Version bzw. deren eigener Dokumentation stammen.
+Exit-Codes des Stop-Kommandos werden bewusst nur protokolliert, weil HWiNFO
+je nach Version/Privilege-Level unterschiedliche CLI-Unterstützung hat.
+
+### HTML-Erzeugung
+
+`scripts\llm_migration_benchmark.py` ist der kanonische Exporter. Nach jedem
+persistierten Sample schreibt er Detail-CSV, JSON, History-CSV,
+Summary-CSV sowie `report.html` und `benchmark_live_status.html`. Das HTML
+zeigt oben die geplante/laufende Serie mit Status und Fortschritt, darunter
+die aggregierte Run-Historie. Samples gehören ausschließlich in die
+Detail-CSV; die Run-Tabelle gruppiert und sortiert nach Benchmark, Backend und
+Modell. Der Agent-Helper verwendet dieselben Körnungen über
+`scripts\agent_helper_eval\schema.py`; seine zusätzlichen Prüffelder sind
+additive, schema-versionierte Erweiterungen und werden ebenfalls aus dem
+Sample-Export aggregiert.
+
 ## Voraussetzungen
 
 - Windows mit PowerShell
@@ -55,6 +351,15 @@ Nur die Ollama-Kontexte lassen sich unabhängig erneut anwenden:
 python .\scripts\configure_ollama_max_context.py
 ```
 
+Für interaktives Coding auf einer GPU mit 12 GB VRAM wird ein 32k-
+Betriebskontext für alle lokalen Ollama-Tags empfohlen. Das reduziert den
+KV-Cache, ohne den nativen Modellkontext zu verändern; die Original-
+Modelfiles werden vor der Änderung gesichert:
+
+```powershell
+python .\scripts\configure_ollama_max_context.py --max-context 32768
+```
+
 Die Synchronisation verwaltet die kompletten Modelllisten der Provider `ollama` und
 `llama-cpp`; manuelle Einträge innerhalb dieser beiden Listen werden ersetzt. Andere Provider,
 Optionen und Zugangsdaten bleiben unverändert.
@@ -75,6 +380,30 @@ python .\scripts\llm_migration_benchmark.py `
   --runs 1
 ```
 
+### 4.1) ik_llama.cpp CUDA-Hybridprofil fuer Qwen 3.6 35B A3B Q4
+
+Der Fork `ikawrakow/ik_llama.cpp` liegt unter
+`C:\Users\z000g9hu\llama.cpp-ik`. Fuer 12-GB-VRAM wird die Attention/KV
+auf die GPU ausgelagert, die MoE-Expertentensoren bleiben im CPU-RAM. Vor
+jeder Ausführung die gemeinsame `local-llm`-Lease nutzen und nach einem
+Treiber-/Toolkitwechsel Windows neu starten.
+
+```powershell
+$cuda = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2'
+$env:Path = "$cuda\bin\x64;$cuda\bin;$env:Path"
+
+C:\Users\z000g9hu\llama.cpp-ik\build-cuda-v132-local\bin\Release\llama-bench.exe `
+  -m C:\Users\z000g9hu\llama.cpp\models\Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf `
+  -p 512 -n 128 -r 3 -ngl 999 -fa 1 -ctk q8_0 -ctv q8_0 -t 16 `
+  -ot "blk\.[0-9]+\.ffn_(up|down|gate)_exps\.weight=CPU" -o json
+```
+
+Ein Ergebnis ist nur gültig, wenn die JSON-Metadaten `cuda=true` und
+`gpu_blas=true` enthalten. Ein CPU-Fallback oder `cuInit=100` wird als
+blockierter Lauf dokumentiert, niemals als GPU-Benchmark ausgewertet.
+`llama-bench` misst ausschliesslich Durchsatz; die Daily-Coder-Eignung
+erfordert danach einen separaten Coding-Gate-Lauf.
+
 ## 5) Kampagnenmodus mit Power-Profilen
 
 ```powershell
@@ -85,6 +414,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 -B
 
 - Neue Ergebnisse werden standardmaessig unter `benchmark_results\` abgelegt (relativ zum Aufrufpfad).
 - Historische Ergebnisse sind unter `data/benchmark_results_legacy\`.
+- Jeder Benchmark-Update erzeugt drei zusammengehörige Artefakte:
+  `benchmark_report.html`/`.md` und `benchmark_run_summary.csv` enthalten die kompakte
+  Übersicht mit einer Zeile je Benchlauf (Datum/Uhrzeit, Backend, Modell,
+  Benchmarkname, Samples, GPU/CPU, VRAM/RAM, Score, Fehler, Tokens/s, Laufzeit,
+  Bewertung). `benchmark_live_status.html`/`.md` enthält die breite operative
+  Tabelle mit Planung, Fortschritt und ETA.
 
 ## 7) Living-memory-Verstaendnisbenchmark
 

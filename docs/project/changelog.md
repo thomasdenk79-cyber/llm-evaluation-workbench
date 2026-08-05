@@ -1,5 +1,78 @@
 # Changelog
 
+## 2026-08-05 — Clean benchmark restart and launch provenance
+
+- Reset generated benchmark output before the next controlled comparison;
+  source runners, tests and model-management files remain intact.
+- Added `launch_profile`, `server_executable`, `model_path` and deterministic
+  `launch_params` JSON to detail/history and run-summary CSVs
+  (`benchmark-v2.1`).
+- Documented the RTX 3500 Ada 12-GB profile, the causes of VRAM underuse and
+  PCIe transfer thrashing, the Q8-KV/fit-margin strategy, and a reproducible
+  CUDA Release build procedure for ik_llama.cpp.
+- Upstream llama.cpp server runs now use Flash Attention, Q8 K/V cache,
+  explicit batch threads and disabled continuous batching for a comparable
+  local profile.
+
+## 2026-08-05 — Unified benchmark master
+
+- `scripts\run_benchmark.py` is now the canonical user-facing entrypoint:
+  comma-separated suites, local backend selection, explicit/wildcard Ollama
+  models, llama.cpp `NAME=PATH` models, TOML options, and a Tkinter/CLI
+  fallback selector.
+- Each completed suite appends to one unified detail CSV, rebuilds the
+  aggregated summary CSV, and refreshes a sortable/filterable HTML dashboard
+  with planned/running status and history.
+- HWiNFO integration is opt-in only via user-supplied start/stop command
+  templates; no undocumented flags are assumed. See the operations runbook.
+- Added distinct `pause.ini` (wait/resume) and `stop.ini` (clean suite
+  termination), a durable PID lock, default `config\benchmark.toml`, safe
+  resume/force output modes, and a dependency-free interactive selector.
+- Added explicit, opt-in model inventory/pull/install hooks; no arbitrary GGUF
+  downloads are performed.
+
+## 2026-08-03 — Zehn Daily-Coder-Kandidaten durch echte Mini-Coding-Gates
+
+- Serielle Ollama-Kampagne `daily-coder-20260803` mit zehn expliziten
+  Kandidaten abgeschlossen; alle Artefakte liegen unter
+  `benchmark_results\agent-helper\daily-coder-20260803\`.
+- Neun Modelle bestanden Connect- und ausführbares Mini-Coding-Gate,
+  darunter Qwen 3.6 35B A3B Q4, DeepSeek Coder V2 16B, Qwen3 Coder 30B,
+  Qwen 3.6 27B Q4 und Laguna XS 2.1 Q4/Q5/Q6.
+- Qwen 3.6 35B A3B Q4 (`35,176 s`, `28,73 Tok/s`) und DeepSeek Coder V2
+  16B (`36,530 s`, `20,91 Tok/s`) waren die schnellsten akzeptierten
+  Mini-Coding-Proben. Beide bleiben `gate-passed-provisional`, da die
+  volle Coding-Suite noch fehlt.
+- Devstral Small 2 24B scheiterte im Mini-Coding-Gate mit
+  `OLLAMA_GENERATE_FAILED`; das harte Akzeptanz-Gate schließt es als
+  `not-usable` aus jeder Performance-Rangfolge aus.
+
+## 2026-08-03 — CUDA-fähigen ik_llama.cpp-Fork aufgebaut und Fork-Messung abgesichert
+
+- `ikawrakow/ik_llama.cpp` wurde unter
+  `C:\Users\z000g9hu\llama.cpp-ik` geklont und für CUDA gebaut
+  (`llama-bench.exe`, `llama-server.exe`).
+- Der erste scheinbare CUDA-Lauf wurde als CPU-Fallback erkannt
+  (`cuda=false`, `gpu_blas=false`) und ausdrücklich von jeder Vergleichs-
+  oder Entscheidungsgrundlage ausgeschlossen.
+- CUDA 13.2 wurde installiert und ein separater CUDA-13.2-Fork-Build
+  vorbereitet. Die direkte CUDA-Driver-API liefert aktuell jedoch
+  `cuInit=100`/keine Geräte; der echte Fork-Benchmark wartet deshalb auf
+  Abschluss der Installation und Windows-Neustart.
+- Handover und Runbook enthalten das reproduzierbare 12-GB-Hybridprofil:
+  GPU Attention/KV, CPU-MoE-Experts, Flash Attention und Q8-KV-Cache.
+
+## 2026-08-03 — Split compact and live benchmark reports
+
+- `benchmark_report.html`/`.md` sowie `benchmark_run_summary.csv` zeigen eine
+  kompakte Zeile je Benchlauf: Datum/Uhrzeit, Backend, Modell, Benchmarkname,
+  Samples, GPU/CPU, VRAM/RAM, Score, Fehler, Tokens/s, Laufzeit und Bewertung.
+- Die breite Tabelle wurde in `benchmark_live_status.html`/`.md` ausgelagert und
+  bleibt dort die operative Ansicht für Planung, Fortschritt und Restzeit/ETA.
+- Die Live-HTML-Ansicht wurde als kontrastreiches Dashboard mit KPI-Karten,
+  gerahmter horizontal scrollbarerer Tabelle, fixiertem Tabellenkopf und
+  farbigen Status-Badges überarbeitet.
+
 ## 2026-08-02 — Shared local-model lease integration (kein Live-Modell)
 
 - Die repo-private PID-Lock-Implementierung ist jetzt ein dünner Adapter auf

@@ -2,16 +2,32 @@
 title: "LLM Evaluation Workbench - Canonical TODO"
 status: active
 canonical: true
-updated: 2026-08-04T02:30:00+02:00
+updated: 2026-08-05T13:30:00+02:00
 ---
 
 # Offene Arbeit
+
+## Handover für den nächsten Agenten — 2026-08-05
+
+- [x] 71-row clean comparison and backend matrix completed.
+- [x] Unified CSV migrated to `benchmark-v2.2` with provider, sample,
+      timing, VRAM, score, error, interpretation and launch-parameter fields.
+- [x] Real local Tabulator 6.3.1 grid vendored and integrated.
+- [ ] Open the HTML report and verify Tabulator behavior in the browser:
+      visible rows, column filters, multi-status filtering, sorting,
+      multi-column grouping, movable columns and parameter expanders.
+- [ ] Add measured `vram_free_gb` to all future telemetry rows; do not
+      estimate historical free VRAM.
+- [ ] Re-run the top finalists with the hard suites before declaring a
+      Daily Runner. The web-grid screen alone is not sufficient.
+- [ ] Validate that future `run_benchmark.py` resume runs append all backend
+      rows to the same v2.2 unified CSV.
 
 ## Clean benchmark restart — 2026-08-05
 
 - [x] Generated benchmark artifacts reset; source runners and tests retained.
 - [x] Persist launch parameters in detail/history and summary CSVs
-      (`benchmark-v2.1`).
+      (`benchmark-v2.2`).
 - [x] Document RTX 3500 Ada VRAM/offload rules and ik_llama.cpp CUDA Release
       build procedure in the operations runbook.
 - [x] Run the clean Ollama inventory and three-repeat medium rerun; publish

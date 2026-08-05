@@ -32,7 +32,7 @@
   empty `benchmark_results` directory; source runners and tests were retained.
 - The migration runner now persists `launch_profile`, `server_executable`,
   `model_path` and deterministic `launch_params` JSON in detail and summary
-  CSVs. Schema version is `benchmark-v2.1`.
+  CSVs. Schema version is `benchmark-v2.2`.
 - For the RTX 3500 Ada 12-GB profile, `fit` with a 1664 MiB margin, Q8 K/V
   cache, Flash Attention, 16 threads, 512/128 batch sizes and 32768 context
   is the controlled starting point. `exps=CPU` and blind `n-cpu-moe` are

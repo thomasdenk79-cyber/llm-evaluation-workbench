@@ -797,7 +797,7 @@ class ConfigPane(Vertical):
             "#field_runs": "Independent repetitions per benchmark task. Default: 1.",
             "#field_timeout_sec": "Hard request timeout. Default: 900 seconds.",
             "#field_vram_headroom_pct": (
-                "Target GPU memory left free after load. Default: 5%. "
+                "Target GPU memory left free after load. Default: 75%. "
                 "Tune proposes settings but never rewrites them silently."
             ),
             "#field_ollama_url": "Ollama API base or /api/generate endpoint.",
@@ -832,7 +832,7 @@ class ConfigPane(Vertical):
             self.query_one("#field_backend", Select).value = str(table.get("backend", "ollama"))
             for key in ("runs", "timeout_sec"):
                 self.query_one(f"#field_{key}", Input).value = str(table.get(key, ""))
-            self.query_one("#field_vram_headroom_pct", Input).value = str(table.get("vram_headroom_pct", 5))
+            self.query_one("#field_vram_headroom_pct", Input).value = str(table.get("vram_headroom_pct", 75))
             self.query_one("#field_ollama_url", Input).value = str(table.get("ollama_url", ""))
             self.query_one("#field_resume", Switch).value = str(table.get("resume", "auto")) == "auto"
             self._set_benchmark_options(table, matrix)
@@ -968,7 +968,7 @@ class ConfigPane(Vertical):
         elif event.action == "defaults":
             table = dict(self._table)
             table.update(DEFAULT_KNOBS)
-            table["vram_headroom_pct"] = 5
+            table["vram_headroom_pct"] = 75
             write_campaign_toml(path, self._header, table, self._matrix)
             self._table = table
             self._load_selected()
@@ -1210,8 +1210,8 @@ class ConfigPane(Vertical):
                 errors.append(f"{label} must be ≥ {minimum}")
         try:
             headroom = float(self.query_one("#field_vram_headroom_pct", Input).value)
-            if not 0.5 <= headroom <= 25:
-                errors.append("VRAM target must be 0.5–25%")
+            if not 1 <= headroom <= 80:
+                errors.append("VRAM target must be 1–80%")
         except ValueError:
             errors.append("VRAM target must be numeric")
         return errors

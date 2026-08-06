@@ -66,7 +66,7 @@ BENCHMARK_SCHEMA = {
         "backend": {"type": "str", "values": ["ollama", "llama_cpp", "siemens", "both", "all"]},
         "runs": {"type": "int", "min": 1, "max": 100},
         "timeout_sec": {"type": "int", "min": 10, "max": 86400, "default": 900},
-        "vram_headroom_pct": {"type": "int", "min": 1, "max": 20, "default": 5},
+        "vram_headroom_pct": {"type": "int", "min": 1, "max": 80, "default": 75},
         "suites": {"type": "str_or_list"},
         "models": {"type": "list", "optional": True},
         "benchmarks": {"type": "list", "optional": True},
@@ -593,7 +593,7 @@ def _estimate_total_layers(params_billion: float | None, size_mb: float | None) 
 def _derive_vram_params(
     model_name: str,
     backend: str,
-    headroom_pct: int,
+    headroom_pct: float,
     available_vram_mb: float | None,
     *,
     model_size_bytes: int | None = None,
@@ -603,7 +603,7 @@ def _derive_vram_params(
 
     Returns a dict of backend-specific parameters, or **None** when
     ``available_vram_mb`` is unavailable *or* ``headroom_pct`` is out of the
-    supported 1-20 range.
+    supported 1-80 range.
 
     Formula: ``available_for_model = available_vram_mb * (1 - headroom_pct / 100)``
 
@@ -619,7 +619,7 @@ def _derive_vram_params(
         return None
     if not isinstance(headroom_pct, (int, float)):
         return None
-    if not (1 <= headroom_pct <= 20):
+    if not (1 <= headroom_pct <= 80):
         return None
 
     available_for_model = available_vram_mb * (1.0 - headroom_pct / 100.0)

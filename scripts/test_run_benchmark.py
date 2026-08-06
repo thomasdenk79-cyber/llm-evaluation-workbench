@@ -166,12 +166,12 @@ class CampaignPlanningTests(unittest.TestCase):
         self.assertEqual(128, result["batch"])
 
     def test_vram_headroom_out_of_range(self) -> None:
-        """``_derive_vram_params`` returns ``None`` for headroom outside 1..20."""
+        """``_derive_vram_params`` returns ``None`` for headroom outside 1..80."""
         self.assertIsNone(
             rb._derive_vram_params("model", "ollama", headroom_pct=0, available_vram_mb=24_000)
         )
         self.assertIsNone(
-            rb._derive_vram_params("model", "ollama", headroom_pct=21, available_vram_mb=24_000)
+            rb._derive_vram_params("model", "ollama", headroom_pct=81, available_vram_mb=24_000)
         )
         self.assertIsNone(
             rb._derive_vram_params("model", "ollama", headroom_pct=-5, available_vram_mb=24_000)
@@ -179,12 +179,16 @@ class CampaignPlanningTests(unittest.TestCase):
         self.assertIsNone(
             rb._derive_vram_params("model", "ollama", headroom_pct=10, available_vram_mb=None)
         )
-        # Boundary values (1 % and 20 %) must succeed
+        # Boundary values (1 % and 80 %) must succeed
         self.assertIsNotNone(
             rb._derive_vram_params("model", "ollama", headroom_pct=1, available_vram_mb=24_000)
         )
         self.assertIsNotNone(
-            rb._derive_vram_params("model", "ollama", headroom_pct=20, available_vram_mb=24_000)
+            rb._derive_vram_params("model", "ollama", headroom_pct=80, available_vram_mb=24_000)
+        )
+        # 75% free target (recommended default) must succeed
+        self.assertIsNotNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=75, available_vram_mb=24_000)
         )
 
     def test_ollama_recovery_starts_service_once(self) -> None:
@@ -249,8 +253,8 @@ class ConfigValidationTests(unittest.TestCase):
         )
 
     def test_vram_headroom_valid_range(self) -> None:
-        """vram_headroom_pct values 1-20 are accepted without errors."""
-        for value in (1, 5, 10, 20):
+        """vram_headroom_pct values 1-80 are accepted without errors."""
+        for value in (1, 5, 20, 75, 80):
             config = {
                 "schema_version": "campaign-v2",
                 "backend": "ollama",
@@ -261,8 +265,8 @@ class ConfigValidationTests(unittest.TestCase):
             self.assertFalse(errors, f"vram_headroom_pct={value} should be valid, got: {errors}")
 
     def test_vram_headroom_invalid_range(self) -> None:
-        """vram_headroom_pct values outside 1-20 produce errors."""
-        for value in (0, 21, -1):
+        """vram_headroom_pct values outside 1-80 produce errors."""
+        for value in (0, 81, -1):
             config = {
                 "schema_version": "campaign-v2",
                 "backend": "ollama",

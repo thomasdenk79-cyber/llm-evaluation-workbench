@@ -1,6 +1,5 @@
 var CACHE_NAME = "llm-bench-v1";
 var STATIC_ASSETS = [
-  "/",
   "/help",
   "/vendor/tabulator/tabulator.min.js",
   "/vendor/tabulator/tabulator.min.css"
@@ -9,9 +8,13 @@ var STATIC_ASSETS = [
 self.addEventListener("install", function(event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
-      return cache.addAll(STATIC_ASSETS).catch(function() {
-        return cache.add("/help");
-      });
+      return Promise.all(
+        STATIC_ASSETS.map(function(url) {
+          return cache.add(url).catch(function() {
+            console.warn("SW: failed to cache " + url);
+          });
+        })
+      );
     })
   );
   self.skipWaiting();
@@ -42,7 +45,12 @@ self.addEventListener("fetch", function(event) {
         }
         return network;
       }).catch(function() {
-        return caches.match("/help");
+        return caches.match("/help").then(function(fallback) {
+          return fallback || new Response("Offline — no cached data available", {
+            status: 503,
+            statusText: "Service Unavailable"
+          });
+        });
       });
     })
   );

@@ -163,7 +163,7 @@ def generate_json_schema() -> dict:
                     "backend": {"type": "string", "enum": ["ollama", "llama_cpp", "siemens", "both", "all"]},
                     "runs": {"type": "integer", "minimum": 1, "maximum": 100},
                     "timeout_sec": {"type": "integer", "minimum": 10, "maximum": 86400, "default": 900},
-                    "vram_headroom_pct": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    "vram_headroom_pct": {"type": "integer", "minimum": 1, "maximum": 80, "default": 75},
                     "suites": {"type": "string"},
                     "models": {"type": "array", "items": {"type": "string"}},
                     "benchmarks": {"type": "array", "items": {"type": "string"}},

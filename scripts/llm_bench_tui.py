@@ -44,6 +44,7 @@ from rich.text import Text  # noqa: E402
 from textual import events, work  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
+from textual.css.query import NoMatches  # noqa: E402
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll  # noqa: E402
 from textual.message import Message  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
@@ -331,7 +332,7 @@ class CollapsibleSection(Container):
         super().__init__(id=id)
         self.title = title
         self._children = children
-        self.collapsed = initially_collapsed
+        self._initially_collapsed = initially_collapsed
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -346,12 +347,17 @@ class CollapsibleSection(Container):
         self.collapsed = not self.collapsed
         self.post_message(self.Toggled(self.id or "", self.collapsed))
 
+    def on_mount(self) -> None:
+        self.collapsed = self._initially_collapsed
+
     def watch_collapsed(self, value: bool) -> None:
         self.set_classes("collapsed" if value else "")
-        self.query_one(".section-header", Static).update(
-            f"{'[ ]' if value else '[*]'} {self.title}"
-        )
-        self.refresh_layout()
+        try:
+            self.query_one(".section-header", Static).update(
+                f"{'[ ]' if value else '[*]'} {self.title}"
+            )
+        except NoMatches:
+            pass
 
 
 
@@ -1077,31 +1083,52 @@ class ConfigPane(Vertical):
                 id="config_actions",
             )
         with Horizontal(id="campaign_builder"):
-            with Vertical(classes="selector_panel"):
-                yield Static("BENCHMARKS · multi-select", classes="panel_title")
-                yield SelectionList(id="benchmark_selection")
-            with Vertical(classes="selector_panel"):
-                yield Static("MODELS · multi-select", classes="panel_title")
-                yield SelectionList(id="model_selection")
-            with Vertical(id="settings_panel"):
-                yield Static("RUN SETTINGS", classes="panel_title")
-                yield Label("Backend / provider")
-                yield Select(
-                    [(v, v) for v in ("ollama", "llama_cpp", "both", "siemens", "all")],
-                    id="field_backend",
-                )
-                yield Label("Runs per task")
-                yield Input(id="field_runs", type="integer")
-                yield Label("Timeout seconds")
-                yield Input(id="field_timeout_sec", type="integer")
-                yield Label("Free VRAM target %")
-                yield Input(id="field_vram_headroom_pct", type="number")
-                yield Label("Ollama endpoint")
-                yield Input(id="field_ollama_url")
-                with Horizontal(classes="switch_row"):
-                    yield Switch(id="field_resume")
-                    yield Label("Resume completed samples")
-        yield DataTable(id="plan_table")
+            yield CollapsibleSection(
+                "Benchmarks",
+                Vertical(
+                    Static("BENCHMARKS · multi-select", classes="panel_title"),
+                    SelectionList(id="benchmark_selection"),
+                    classes="selector_panel",
+                ),
+            )
+            yield CollapsibleSection(
+                "Models",
+                Vertical(
+                    Static("MODELS · multi-select", classes="panel_title"),
+                    SelectionList(id="model_selection"),
+                    classes="selector_panel",
+                ),
+            )
+            yield CollapsibleSection(
+                "Run Settings",
+                Vertical(
+                    Static("RUN SETTINGS", classes="panel_title"),
+                    Label("Backend / provider"),
+                    Select(
+                        [(v, v) for v in ("ollama", "llama_cpp", "both", "siemens", "all")],
+                        id="field_backend",
+                    ),
+                    Label("Runs per task"),
+                    Input(id="field_runs", type="integer"),
+                    Label("Timeout seconds"),
+                    Input(id="field_timeout_sec", type="integer"),
+                    Label("Free VRAM target %"),
+                    Input(id="field_vram_headroom_pct", type="number"),
+                    Label("Ollama endpoint"),
+                    Input(id="field_ollama_url"),
+                    Horizontal(
+                        Switch(id="field_resume"),
+                        Label("Resume completed samples"),
+                        classes="switch_row",
+                    ),
+                    id="settings_panel",
+                ),
+            )
+        yield CollapsibleSection(
+            "Plan",
+            DataTable(id="plan_table"),
+            id="plan_section",
+        )
         yield Static(id="config_status")
 
     def on_mount(self) -> None:
@@ -2159,7 +2186,7 @@ class ColumnSelectPanel(ModalScreen):
 
     CSS = """
     ColumnSelectPanel {
-        Alignment: center-middle;
+        align: center middle;
     }
     """
 
@@ -2202,7 +2229,7 @@ class ColumnSelectPanel(ModalScreen):
             }
             self.dismiss(selected)
 
-    def on_key(self, event: Key) -> None:
+    def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             self.dismiss(None)
 

@@ -854,7 +854,7 @@ connect-gate/mini-gate executor).
 ## 14. Safe next commands (no model calls)
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # 1) No-model dry-run: exercises the whole pipeline with synthetic data only,
 #    including a deterministic phase-attribution and capacity-profile
@@ -950,7 +950,7 @@ human/parent agent runs manually.
    passed (even the same model is refused by default — an operator must
    consciously opt in to reuse).
 2. **Shared local-model lease** (`local_lock.py` adapts the canonical
-   `standards/scripts/local_model_lease.py`): wait for Resource-ID
+   `${ENGINEERING_GOVERNANCE_ROOT}/scripts/local_model_lease.py`): wait for Resource-ID
    `local-llm`, renew it while the workload runs, then perform the Ollama
    preflight while still holding it. Agents, migration benchmarks and this
    harness therefore cannot cooperatively overlap on the 12 GB VRAM budget.
@@ -1009,7 +1009,7 @@ container/seccomp-level sandbox.
 ### 16.3 CLI commands
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # Real one-model connect/format-smoke check. Requires a running local
 # `ollama serve` with --model already pulled/available.
@@ -1173,7 +1173,7 @@ maintenance pass for an already-persisted campaign directory:
 New CLI subcommand:
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 python .\run_agent_helper_campaign.py recompute-campaign --campaign-id <id>
 ```
 
@@ -1380,7 +1380,7 @@ structurally impossible, not just avoided by convention:
 ### 17.3 New CLI subcommands
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # REAL, read-only inventory discovery (list/show only). Persists a
 # snapshot into the campaign's own output directory.
@@ -1468,7 +1468,7 @@ was made at any point while building/testing this phase.
 ### 17.5 Exact next commands for the parent agent
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # 1) REAL inventory snapshot + no-model dry plan (discovers fresh,
 #    excludes cloud tags by default, shows every excluded/deferred model
@@ -1669,7 +1669,7 @@ building/testing this phase.
 ### 18.7 Exact remediation/rerun command for the parent agent
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # Resume the exact same real serial pilot: the connect-gate sample already
 # accepted for qwen3-coder:30b is recognized and skipped; only its missing

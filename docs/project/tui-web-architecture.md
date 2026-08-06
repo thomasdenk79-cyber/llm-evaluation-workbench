@@ -34,7 +34,7 @@ remainder, ordered by value/effort, for the next agent or session to pick up.
   `run_benchmark.py`'s `--install-ollama` prompt); the TUI keeps that.
 - Everything must degrade gracefully offline: no CDN dependency (mirrors
   the already-vendored Tabulator 6.3.1 approach), stdlib-first web server
-  (mirrors `C:\GIT\taskvision-grid-lab\server.py`, which uses
+  (mirrors `${ENGINEERING_REPOS_ROOT}/taskvision-grid-lab/server.py`, which uses
   `http.server.ThreadingHTTPServer` with **no** external web framework and
   a query-param-negotiated `none|gzip|br|zstd` compression scheme -- reused
   here rather than reinvented).

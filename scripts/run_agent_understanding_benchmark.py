@@ -16,8 +16,10 @@ from understanding_scoring import diagnostic_prompt, evaluate_checks, validate_c
 
 
 DEFAULT_CATALOG = Path(__file__).resolve().parents[1] / "benchmarks" / "living-memory-agent-v1.json"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = Path(os.environ.get("ENGINEERING_REPOS_ROOT", REPO_ROOT.parent))
 DEFAULT_PRIVATE_OUTPUT = (
-    Path(r"C:\GIT\user-memory\why\conversations\benchmarks")
+    REPO_ROOT / "benchmark_results" / "private"
     / "living-memory-agent-results.jsonl"
 )
 
@@ -26,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", action="append", default=[], help="OpenCode provider/model")
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
-    parser.add_argument("--workspace", type=Path, default=Path(r"C:\GIT"))
+    parser.add_argument("--workspace", type=Path, default=WORKSPACE_ROOT)
     parser.add_argument("--output", type=Path, default=DEFAULT_PRIVATE_OUTPUT)
     parser.add_argument("--execute", action="store_true", help="Run models; default is dry-run")
     parser.add_argument("--no-feedback", action="store_true")

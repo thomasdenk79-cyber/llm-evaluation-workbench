@@ -219,7 +219,7 @@ python .\scripts\run_benchmark.py `
   --models "*qwen*,deepseek-coder-v2:16b" `
   --llama-model "qwen35=C:\MODELLE\qwen35.gguf" `
   --llama-server "C:\Users\z000g9hu\llama.cpp\bin\llama-server.exe" `
-  --output "C:\GIT\llm-evaluation-workbench\benchmark_results\unified_benchmark_detail.csv"
+  --output "${ENGINEERING_REPOS_ROOT}/llm-evaluation-workbench/benchmark_results/unified_benchmark_detail.csv"
 ```
 
 Alle Optionen können in TOML unter `[benchmark]` stehen. Ohne CLI-Parameter
@@ -436,9 +436,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_benchmark_campaign.ps1 -B
 
 Zwei getrennte Tracks verhindern falsche Vergleiche und Datenabfluss:
 
-- **Tool-Agent:** OpenCode arbeitet im echten `C:\GIT`. Der gesamte Live-Workspace-
+- **Tool-Agent:** OpenCode arbeitet im echten `${ENGINEERING_REPOS_ROOT}`. Der gesamte
+  Live-Workspace-
   Katalog ist `restricted` und nur fuer lokale `ollama/*`-Modelle erlaubt. Ergebnisse mit realem User-Kontext
-  liegen privat unter `C:\GIT\user-memory\why\conversations\benchmarks`.
+  liegen privat unter `benchmark_results/private/` und bleiben durch `.gitignore` lokal.
 - **Pure Model:** Ollama- oder Siemens-API erhaelt bei jedem Fall ausschliesslich das
   synthetische Fixture. Dieser Track misst Regelverstaendnis, nicht Dateisystem-Retrieval.
 
@@ -500,7 +501,7 @@ and writes raw 1 Hz CPU/GPU/VRAM/power/temperature/clock telemetry plus
 per-request tok/s to an isolated result directory.
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # Select Q4 or Q5 and cooler off/on interactively. Ollama starts only when
 # necessary, and a server started by this script stops after the run.
@@ -540,7 +541,7 @@ volle Spezifikation.
 **No-model dry-run** (empfohlen vor jeder echten Kampagne, beliebig oft wiederholbar):
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 python .\run_agent_helper_campaign.py dry-run --campaign-id dry-run-<datum>
 ```
 
@@ -608,7 +609,7 @@ einen laufenden lokalen Ollama-Server auf — volle Methodik in
 ausgeführt, nur vom Parent-Agent/Menschen manuell):
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # Voraussetzung: `ollama serve` läuft lokal und --model ist bereits
 # gepullt/verfügbar. Wartet standardmäßig bis zu 3600 Sekunden auf die
@@ -629,7 +630,7 @@ python .\run_agent_helper_campaign.py mini-gate-run `
 Beide Befehle sind bewusst **One-Shot**: eine Korrektur-/Folge-Iteration ist
 ein separater, später Befehl. `--local-lease-wait-seconds` steuert das
 begrenzte Warten auf die kanonische Lease in
-`C:\GIT\standards\scripts\local_model_lease.py`. Erst ein Wait-Timeout,
+`${ENGINEERING_GOVERNANCE_ROOT}/scripts/local_model_lease.py`. Erst ein Wait-Timeout,
 Lockfehler oder eine Preflight-Verweigerung (z. B. ein bereits geladenes
 Fremdmodell) druckt
 `REFUSED (nothing attempted, nothing persisted): <Grund>`, gibt Exit-Code
@@ -646,7 +647,7 @@ CSVs, JSON-Artefakt pro Sample, HTML-Bericht) — exakt dieselbe Pipeline wie
 Session selbst ausgeführt, nur vom Parent-Agent/Menschen manuell):
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # 1) REAL, read-only Discovery (nur GET /api/tags + POST /api/show -- lädt
 #    und generiert nie). Speichert einen Snapshot in die Kampagne, ohne die
@@ -739,6 +740,6 @@ der manuellen CLI-Verifikation einer früheren Phase, und §17.4 für die
 neuen Discovery-/Serial-Runner-Tests):
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 python -m unittest test_agent_helper_eval -v
 ```

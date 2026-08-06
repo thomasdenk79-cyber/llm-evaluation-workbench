@@ -8,29 +8,22 @@
 
 ## 0. Architektur: Wie alles zusammenhängt
 
-```
-OneDrive\GIT\          ← alle Repos + globale Agent-Regeln
-    │
-    ├── AGENTS.md      ← MASTER: Eine Datei für ALLE AI-Agents
-    ├── llm-evaluation-workbench\
-    ├── throne-liberty-eu-kalender\
-    └── ...
+```text
+ENGINEERING_REPOS_ROOT
+  AGENTS.md                    reiner Workspace-Router
+  .engineering-workspace.yaml
+  <repositories>
 
-C:\GIT\                ← Junction (mklink /J) → OneDrive\GIT\
-    └── AGENTS.md      ← selbe Datei, automatisch via Junction
-
-Agent-spezifische Symlinks (erstellt durch Autoinstaller):
-    %USERPROFILE%\CLAUDE.md                    → C:\GIT\AGENTS.md  (Claude Code)
-    %USERPROFILE%\.codex\instructions.md       → C:\GIT\AGENTS.md  (OpenAI Codex CLI)
-    %USERPROFILE%\.cursorrules                 → C:\GIT\AGENTS.md  (Cursor)
-    %APPDATA%\Code\User\prompts\global-agent-rules.instructions.md  → C:\GIT\AGENTS.md  (Copilot)
-
-Env-Vars (User-Scope, persistent):
-    AI_AGENT_INSTRUCTIONS = C:\GIT\AGENTS.md  (universeller Zeiger)
-    CODEX_SYSTEM_PROMPT   = <Inhalt>           (für Agents ohne Datei-Lesen)
+ENGINEERING_GOVERNANCE_ROOT
+  AGENTS.md                    kanonische Policies
+  docs/
+  scripts/
 ```
 
-**Nur `C:\GIT\AGENTS.md` pflegen — alle Agents sehen es sofort.**
+Providerdateien wie `CLAUDE.md`, `GEMINI.md`, Copilot-Instructions, Codex- und
+OpenCode-Regeln enthalten nur einen kleinen Router auf `ENGINEERING_GOVERNANCE_ROOT`.
+Provideradapter werden künftig durch `engws init/configure` nach Backup, Diff und
+User-Bestätigung eingerichtet. Symlinks sind optionaler Fallback, keine universelle Lösung.
 
 ---
 
@@ -49,7 +42,7 @@ Env-Vars (User-Scope, persistent):
 C:\Users\z000g9hu\OneDrive - Siemens AG\tools\scripts\TommysWin11Autoinstaller.bat
 ```
 Kategorien wählen:
-- **"System"** → erstellt `C:\GIT` Junction + setzt Env-Vars
+- **"System"** → erstellt den Repository-Junction und setzt die Engineering-Variablen
 - **"Development"** → VS Code Extensions, Copilot, Siemens LLM, `restore_agent_rules.ps1` (setzt alle Agent-Symlinks)
 - **"AI Tools"** → Siemens LLM konfigurieren
 
@@ -141,7 +134,7 @@ Sie sind NICHT in OneDrive gesichert (zu groß). Bei Neuinstallation von Hugging
 ### 2d. OpenCode-Modellpicker und Auto-Load
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench
+Set-Location "$env:ENGINEERING_REPOS_ROOT\llm-evaluation-workbench"
 powershell -ExecutionPolicy Bypass -File .\scripts\install_llama_router_startup.ps1 -StartNow
 ```
 
@@ -208,12 +201,13 @@ Invoke-RestMethod -Uri "https://api.siemens.com/llm/v1/chat/completions" -Method
 
 ```powershell
 # Repo klonen (falls nicht vorhanden):
-git clone https://github.com/thomasdenk79-cyber/llm-evaluation-workbench.git D:\git\llm-evaluation-workbench
+$repo = Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench"
+git clone https://github.com/thomasdenk79-cyber/llm-evaluation-workbench.git $repo
 
 # Oder via OneDrive (falls synchronisiert):
-# D:\git ist oft mit "C:\Users\z000g9hu\OneDrive - Siemens AG\GIT\" verknüpft
+# ENGINEERING_REPOS_ROOT darf auf einen lokalen Ordner oder eine Junction zeigen.
 
-cd D:\git\llm-evaluation-workbench
+Set-Location $repo
 
 # Dependencies installieren:
 pip install -r requirements.txt  # psutil>=5.9
@@ -221,7 +215,7 @@ pip install -r requirements.txt  # psutil>=5.9
 
 ### 4b. Schnelltest nach Setup
 ```powershell
-cd D:\git\llm-evaluation-workbench
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench")
 
 # Ollama-Test (qwen3-coder:30b, 3 Runs):
 python .\scripts\llm_migration_benchmark.py --backend ollama --ollama-models "qwen3-coder:30b" --runs 1
@@ -276,7 +270,7 @@ powershell -ExecutionPolicy Bypass -File `
 | Ollama Modelle | `C:\Users\z000g9hu\.ollama\models\` | ❌ (re-download) |
 | GGUF Modelle | `C:\Users\z000g9hu\llama.cpp\models\` | ❌ (re-download) |
 | llama.cpp Binaries | `C:\Users\z000g9hu\llama.cpp\bin\` | ❌ (re-download) |
-| Benchmark-Repo | `D:\git\llm-evaluation-workbench\` | ✅ (via git+OneDrive) |
+| Benchmark-Repo | `${ENGINEERING_REPOS_ROOT}/llm-evaluation-workbench/` | ✅ (via Git; Ablage frei wählbar) |
 | Setup-Scripts | `OneDrive\tools\scripts\` | ✅ |
 | VS Code Chat-Backup | `OneDrive\ai_agent\vscode-chat-backup\` | ✅ |
 | Autoinstaller-Config | `OneDrive\tools\scripts\autoinstaller_config.ini` | ✅ |

@@ -83,13 +83,15 @@ def _open_file(path: str) -> None:
 ROOT = rb.ROOT
 CONFIG_DIR = ROOT / "config"
 BACKUP_DIR = ROOT / "benchmark_results" / "llm-inventory-backups"
+WORKSPACE_ROOT = Path(os.environ.get("ENGINEERING_REPOS_ROOT", ROOT.parent))
+MONITOR_ROOT = WORKSPACE_ROOT / "wt-command-center" / "scripts" / "agents"
 MONITOR_SCRIPT = Path(os.environ.get(
     "AGENT_MONITOR_SCRIPT",
-    r"C:\GIT\wt-command-center\scripts\agents\agent_monitor_ui.py",
+    str(MONITOR_ROOT / "agent_monitor_ui.py"),
 ))
 MONITOR_COLLECTOR = Path(os.environ.get(
     "AGENT_MONITOR_COLLECTOR",
-    r"C:\GIT\wt-command-center\scripts\agents\agent-monitor.ps1",
+    str(MONITOR_ROOT / "agent-monitor.ps1"),
 ))
 MONITOR_CONFIG = Path(os.environ.get(
     "AGENT_MONITOR_CONFIG",

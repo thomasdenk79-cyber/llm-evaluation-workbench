@@ -596,21 +596,21 @@ danach DDU im abgesicherten Modus einsetzen.
 
 ### Runtime-Guard und Neustart (2026-08-02)
 
-- `C:\GIT\standards\scripts\ai_runtime.py` ist der gemeinsame Guard fuer
+- `${ENGINEERING_GOVERNANCE_ROOT}/scripts/ai_runtime.py` ist der gemeinsame Guard fuer
   Kontextbudget, Nutzungsmetadaten und lokale Blocker. OpenCode ist auf 98.304
   Kontext- und 8.192 Output-Tokens begrenzt; ab 65.536 Tokens ist ein
   Phasenabschluss faellig, ab 98.304 Tokens eine neue Session.
 - Lokale OpenCode-Worker starten nur ueber
-  `C:\GIT\standards\scripts\start_ai_worker.ps1`; der Wrapper nutzt die
+  `${ENGINEERING_GOVERNANCE_ROOT}/scripts/start_ai_worker.ps1`; der Wrapper nutzt die
   kanonische `local-llm`-Lease und blockiert bei manuellem Blocker oder `TL.exe`.
   Siemens-Worker bleiben ohne lokale GPU-Last verfuegbar.
 - `agent_helper_eval\local_lock.py` prueft vor lokalen Benchmark-Leases dieselbe
   Runtime-Policy. Die schnelle Gesamtsuite lief nach der Integration mit
   279/279 Tests erfolgreich.
 - Nach dem NVIDIA-Neustart zuerst
-  `python C:\GIT\standards\scripts\ai_runtime.py status` ausfuehren. Erst wenn
+  `python "$env:ENGINEERING_GOVERNANCE_ROOT\scripts\ai_runtime.py" status` ausfuehren. Erst wenn
   keine Blocker und keine Fremdlease sichtbar sind, lokale Modellarbeit planen.
-- Fuer manuelles Gaming `C:\GIT\standards\scripts\ai-runtime-control.cmd`
+- Fuer manuelles Gaming `${ENGINEERING_GOVERNANCE_ROOT}/scripts/ai-runtime-control.cmd`
   doppelklicken und im Menue pausieren oder fortsetzen; keine Parameter merken.
 
 ### Laufbedingung: Energieprofil (2026-08-02)
@@ -723,8 +723,8 @@ Get-ChildItem "$env:USERPROFILE\.ollama\imports\higher-quants" -File |
 ### 1. Kontext laden
 
 ```powershell
-Set-Location C:\GIT\llm-evaluation-workbench
-Get-Content C:\GIT\AGENTS.md
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench")
+Get-Content "$env:ENGINEERING_GOVERNANCE_ROOT\AGENTS.md"
 Get-Content .\AGENTS.md
 Get-Content .\docs\project\handover.md
 Get-Content .\docs\project\todo.md
@@ -742,7 +742,7 @@ python -m unittest test_agent_helper_eval
 ### 3. Erst nach abgeschlossener Quantisierungsinstallation Pilot fortsetzen
 
 ```powershell
-Set-Location C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 python .\run_agent_helper_campaign.py serial-execute `
   --campaign-id agent-helper-serial-pilot-20260801 --confirm `
   --models "qwen3-coder:30b,deepseek-coder-v2:16b,phi4-mini:3.8b-q4_K_M,rnj-1:8b"
@@ -771,9 +771,9 @@ wird allein wegen hoher TPS empfohlen.
 - Austausch erfolgt über versionierte Benchmarkkataloge mit Provenienz,
   nicht durch parallele Änderungen derselben Dateien.
 - Command-Center-Repositories hier nicht bearbeiten.
-- Das ITSM-PoC liegt separat unter `C:\GIT\itsm-platform-poc`; dessen
+- Das ITSM-PoC liegt separat unter `${ENGINEERING_REPOS_ROOT}/itsm-platform-poc`; dessen
   eigener Wiederaufsetzpunkt ist
-  `C:\GIT\itsm-platform-poc\docs\project\handover.md`.
+  `${ENGINEERING_REPOS_ROOT}/itsm-platform-poc/docs/project/handover.md`.
 
 ## Bekannte Risiken
 
@@ -794,8 +794,9 @@ wird allein wegen hoher TPS empfohlen.
 
 ```text
 Arbeite ausschließlich am LLM-Agent-Helper- und Benchmark-Track in
-C:\GIT\llm-evaluation-workbench. Lies zuerst C:\GIT\AGENTS.md,
-C:\GIT\llm-evaluation-workbench\AGENTS.md,
+`${ENGINEERING_REPOS_ROOT}/llm-evaluation-workbench`. Lies zuerst
+`${ENGINEERING_GOVERNANCE_ROOT}/AGENTS.md`,
+`${ENGINEERING_REPOS_ROOT}/llm-evaluation-workbench/AGENTS.md`,
 docs\project\handover.md und docs\project\todo.md vollständig.
 
 Setze den dokumentierten Zustand fort, ohne fremde dirty Änderungen zu

@@ -6,7 +6,6 @@ Prüft:
   2. Alle nav-Seiten wurden gebaut und sind nicht leer
   3. Keine kaputten internen Links in der gebauten Site
   4. AGENTS.md-Pflichtabschnitte vorhanden
-  5. session-log.md wurde in den letzten 7 Tagen aktualisiert
 
 Ausführen:
   cd D:\\git\\llm-evaluation-workbench
@@ -16,11 +15,11 @@ Oder mit pytest:
   pytest scripts\\test_docs.py -v
 """
 
+import os
+import re
 import subprocess
 import sys
-import re
 from pathlib import Path
-from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
 # ── Pfade ──────────────────────────────────────────────────────────────────
@@ -29,8 +28,6 @@ SITE_DIR    = REPO_ROOT / "site"
 DOCS_DIR    = REPO_ROOT / "docs"
 MKDOCS_YML  = REPO_ROOT / "mkdocs.yml"
 AGENTS_MD   = REPO_ROOT / "AGENTS.md"
-MEMORY_DIR  = Path("C:/GIT/.memory")
-SESSION_LOG = MEMORY_DIR / "session-log.md"
 
 
 # ── Hilfsklasse: interne Links aus HTML extrahieren ────────────────────────
@@ -50,8 +47,12 @@ class LinkExtractor(HTMLParser):
 
 def test_mkdocs_build():
     """mkdocs build muss fehlerfrei durchlaufen."""
+    governance_root = os.environ.get("ENGINEERING_GOVERNANCE_ROOT")
+    if not governance_root:
+        raise AssertionError("ENGINEERING_GOVERNANCE_ROOT ist nicht gesetzt")
+    runner = Path(governance_root) / "scripts" / "run_mkdocs.py"
     result = subprocess.run(
-        [sys.executable, "-m", "mkdocs", "build", "--strict"],
+        [sys.executable, str(runner), "build", "--strict"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -234,26 +235,9 @@ def test_benchmark_html_top5_always_visible():
         "Top 5 chart (chart-overall) should not be wrapped in <details> element"
 
 
-def test_session_log_recently_updated():
-    """session-log.md sollte innerhalb der letzten 7 Tage aktualisiert worden sein."""
-    if not SESSION_LOG.exists():
-        # Kein Fehler — vielleicht erstes Setup
-        print(f"  ⚠  session-log.md nicht gefunden: {SESSION_LOG}")
-        return
-
-    mtime = datetime.fromtimestamp(SESSION_LOG.stat().st_mtime)
-    age = datetime.now() - mtime
-
-    # Warnung, kein harter Fehler — könnte bewusst sein
-    if age > timedelta(days=7):
-        print(f"  ⚠  session-log.md zuletzt geändert vor {age.days} Tagen — aktualisieren!")
-    else:
-        print(f"  ✓  session-log.md aktuell (vor {age.days}d {age.seconds//3600}h)")
-
-
 # ── Direktaufruf (ohne pytest) ─────────────────────────────────────────────
 if __name__ == "__main__":
-    import io, os
+    import io
     # UTF-8 Output erzwingen (Windows-Konsole cp1252 umgehen)
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -263,7 +247,6 @@ if __name__ == "__main__":
         test_no_empty_pages,
         test_no_broken_internal_links,
         test_agents_md_mandatory_sections,
-        test_session_log_recently_updated,
         test_benchmark_html_has_quality_bars,
         test_benchmark_html_has_export_button,
         test_benchmark_html_top5_always_visible,

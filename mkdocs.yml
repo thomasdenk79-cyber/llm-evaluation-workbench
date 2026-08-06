@@ -1,5 +1,5 @@
 # WHY: standards ist als Git Submodule im Repo unter standards/ — daher relativer Pfad von hier
-INHERIT: standards/mkdocs-base.yml
+INHERIT: "${ENGINEERING_GOVERNANCE_ROOT}/mkdocs-base.yml"
 
 site_name: LLM Evaluation Workbench
 site_description: Benchmark-Workbench fuer lokale und Siemens-Cloud-LLMs

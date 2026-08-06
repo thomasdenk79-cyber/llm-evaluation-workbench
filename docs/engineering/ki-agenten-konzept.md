@@ -1,7 +1,7 @@
 # KI-Agenten-Team-Konzept
 
 !!! info "Vollständige Dokumentation"
-    Das vollständige Konzept liegt in C:\GIT\docs\ki-team-konzept.md
-    und in .memory\SOTA_CONCEPT.md (Research-Referenz für Review-LLM).
+    Das vollständige Konzept liegt unter
+    `${ENGINEERING_GOVERNANCE_ROOT}/docs/concepts/agent-team.md`.
 
 Hier die Kurzfassung für den täglichen Gebrauch im Workbench-Projekt.

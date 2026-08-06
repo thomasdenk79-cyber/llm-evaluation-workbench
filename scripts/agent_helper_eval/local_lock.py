@@ -22,19 +22,16 @@ def _load_shared_module():
     candidates = []
     if configured:
         candidates.append(Path(configured))
-    repo_root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            Path(r"C:\GIT\standards\scripts\local_model_lease.py"),
-            repo_root / "standards" / "scripts" / "local_model_lease.py",
-        ]
-    )
+    governance_root = os.environ.get("ENGINEERING_GOVERNANCE_ROOT")
+    if governance_root:
+        candidates.append(Path(governance_root) / "scripts" / "local_model_lease.py")
     script_path = next((path for path in candidates if path.is_file()), None)
     if script_path is None:
         searched = ", ".join(str(path) for path in candidates)
         raise RuntimeError(
             "canonical local-model lease script not found; set "
-            f"LOCAL_MODEL_LEASE_SCRIPT or install standards (searched: {searched})"
+            "LOCAL_MODEL_LEASE_SCRIPT or ENGINEERING_GOVERNANCE_ROOT "
+            f"(searched: {searched})"
         )
     module_name = "_shared_local_model_lease"
     existing = sys.modules.get(module_name)
@@ -60,16 +57,14 @@ def _load_runtime_module():
     candidates = []
     if configured:
         candidates.append(Path(configured))
-    candidates.extend(
-        [
-            Path(r"C:\GIT\standards\scripts\ai_runtime.py"),
-            Path(__file__).resolve().parents[2] / "standards" / "scripts" / "ai_runtime.py",
-        ]
-    )
+    governance_root = os.environ.get("ENGINEERING_GOVERNANCE_ROOT")
+    if governance_root:
+        candidates.append(Path(governance_root) / "scripts" / "ai_runtime.py")
     script_path = next((path for path in candidates if path.is_file()), None)
     if script_path is None:
         raise RuntimeError(
-            "AI runtime control-plane script not found; set AI_RUNTIME_SCRIPT or install standards"
+            "AI runtime control-plane script not found; set AI_RUNTIME_SCRIPT or "
+            "ENGINEERING_GOVERNANCE_ROOT"
         )
     module_name = "_shared_ai_runtime"
     existing = sys.modules.get(module_name)

@@ -1,7 +1,7 @@
 # LLM Evaluation Workbench - project router
 
 - **AI-ACCESS:** allowed
-- **INHERITS:** `C:\GIT\AGENTS.md` and `C:\GIT\standards\AGENTS.md`
+- **INHERITS:** `${ENGINEERING_GOVERNANCE_ROOT}/AGENTS.md`
 - **OVERRIDES:** local benchmark safety, reporting, reproducibility, and lifecycle rules below
 - **SCOPE:** this repository
 
@@ -49,8 +49,8 @@
   Zeit bis zum erfolgreichen Ergebnis und bleibt eine getrennte
   Routing-Einschätzung.
 
-> Mandatory before work: read `C:\GIT\user-memory\profile.md`,
-> `C:\GIT\agent-memory\INDEX.md`, `C:\GIT\standards\AGENTS.md`, then this file.
+> Mandatory before work: read `${ENGINEERING_GOVERNANCE_ROOT}/AGENTS.md`, then this file.
+> Load optional user context only as allowed by the workspace user settings.
 
 ## Aktueller Stand
 
@@ -123,7 +123,7 @@
 
 - `scripts\agent_helper_eval\local_lock.py` adaptiert jetzt die kanonische,
   dependency-freie Lease unter
-  `standards\scripts\local_model_lease.py`; Resource-ID `local-llm` gilt
+  `${ENGINEERING_GOVERNANCE_ROOT}/scripts/local_model_lease.py`; Resource-ID `local-llm` gilt
   workspaceübergreifend für Ollama/llama.cpp.
 - Agent-Helper-Gates und `llm_migration_benchmark.py` warten begrenzt auf
   Freigabe, erneuern die Lease während des Workloads und geben nur die
@@ -194,7 +194,7 @@
   (Eintrag "Serial-Pilot-Crash-Fix").
 - **Exakter Wiederaufnahme-Befehl für den Parent-Agent:**
   ```powershell
-  cd C:\GIT\llm-evaluation-workbench\scripts
+  Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
   python .\run_agent_helper_campaign.py serial-execute `
     --campaign-id agent-helper-serial-pilot-20260801 --confirm `
     --models "qwen3-coder:30b,deepseek-coder-v2:16b,phi4-mini:3.8b-q4_K_M,rnj-1:8b"
@@ -791,7 +791,7 @@ than assuming the profile name predicts performance.
 ## Quick commands
 
 ```powershell
-cd D:\git\llm-evaluation-workbench
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench")
 
 # Siemens, all configured models
 python .\scripts\llm_migration_benchmark.py --backend siemens --runs 3
@@ -815,7 +815,7 @@ python .\scripts\llm_migration_benchmark.py `
 ### Agent-helper evaluation harness (no model calls; see `docs\operations\runbook.md`)
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # No-model dry-run: validates storage/aggregation/report pipeline end-to-end.
 python .\run_agent_helper_campaign.py dry-run --campaign-id dry-run-<date>
@@ -846,7 +846,7 @@ for a transparency note on one accidental real call made during this
 feature's own manual CLI verification.
 
 ```powershell
-cd C:\GIT\llm-evaluation-workbench\scripts
+Set-Location (Join-Path $env:ENGINEERING_REPOS_ROOT "llm-evaluation-workbench\scripts")
 
 # Requires a running local `ollama serve` with the model already available.
 # Enforces preflight (ollama ps) + filesystem max-one-local-model lock;
@@ -900,9 +900,9 @@ or completion response:
 |---|---|
 | Technical state and next command | this file and the relevant report/runbook |
 | Detailed benchmark result | canonical report plus result files |
-| Personal/professional Thomas context | `C:\GIT\user-memory\profile.md` |
-| Cross-project handoff | `C:\GIT\user-memory\session-log.md` |
-| Reusable agent learning | route through `C:\GIT\agent-memory\INDEX.md` |
+| Optional user context | load only when enabled in workspace user settings |
+| Cross-project handoff | explicit, sanitized handoff; no implicit memory write |
+| Reusable agent learning | repository docs or a governance proposal |
 
 Do not wait for Thomas to ask for persistence.
 

@@ -60,7 +60,7 @@ current implementation status.
   embedded web server, so pause/stop/resume and richer inspection are also
   possible from a browser, without needing OS-level agent mediation for
   every action.
-- Reference basis: `C:\GIT\taskvision-grid-lab\server.py` -- a
+- Reference basis: `${ENGINEERING_REPOS_ROOT}/taskvision-grid-lab/server.py` -- a
   stdlib-only `http.server` implementation with configurable response
   compression (`none`/`gzip`/`br`/`zstd`), which this project should reuse
   the *pattern* of (not the TaskVision-specific schema/routes).

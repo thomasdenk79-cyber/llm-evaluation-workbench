@@ -1964,6 +1964,7 @@ class ResultsPane(Vertical):
                 ("R", "Refresh", "#55ccff"),
                 ("G", "Group", "#bd93f9"),
                 ("C", "Clear group", "#ffcc33"),
+                ("S", "Select columns", "#c678dd"),
                 ("W", "Web report", "#28c85a"),
                 ("E", "Excel", "#ff8c1e"),
                 id="results_actions",
@@ -2089,6 +2090,17 @@ class ResultsPane(Vertical):
             self._group_keys = []
             self._populate_table(self._rows)
             self.query_one("#results_status", Static).update("Grouping cleared")
+        elif event.action == "select_columns":
+            table = self.query_one(DataTable)
+            visible = {
+                (key, title)
+                for key, title in COLUMNS
+                if not table.columns.get(key).hidden
+            }
+            self.app.push_screen(
+                ColumnSelectPanel(visible),
+                self._apply_columns,
+            )
         elif event.action == "web_report":
             _open_file(str(self.report_path()))  # noqa: S606 -- local file, user-triggered
         elif event.action == "excel":
@@ -2121,12 +2133,79 @@ class ResultsPane(Vertical):
             "Grouped by " + " → ".join(self._group_keys)
         )
 
+    def _apply_columns(self, selected: set[tuple[str, str]] | None) -> None:
+        if selected is None or not selected:
+            return
+        table = self.query_one(DataTable)
+        for key, title in COLUMNS:
+            try:
+                col = table.columns.get(key)
+                col.hidden = (key, title) not in selected
+            except KeyError:
+                pass
+        self._populate_table(self._rows)
+        count = len(selected)
+        self.query_one("#results_status", Static).update(f"{count}/{len(COLUMNS)} columns visible")
+
 
 # --------------------------------------------------------------------------
 # Leaderboard -- top 5 models overall + a simple ASCII bar chart (no extra
 # charting dependency; see docs/project/tui-web-architecture.md for the
 # `plotext` upgrade path if the project wants richer charts later).
 # --------------------------------------------------------------------------
+
+class ColumnSelectPanel(ModalScreen):
+    """Modal to select visible columns in the Results table."""
+
+    CSS = """
+    ColumnSelectPanel {
+        Alignment: center-middle;
+    }
+    """
+
+    def __init__(self, default_selected: set[tuple[str, str]] | None = None) -> None:
+        super().__init__()
+        self._default = default_selected if default_selected is not None else set(COLUMNS)
+
+    def compose(self) -> ComposeResult:
+        yield Footer()
+        with Center():
+            with ScrollableContainer(id="panel"):
+                yield Label("Select visible columns")
+                yield SelectionList[str](id="columns", allow_multiple=True)
+                with Horizontal():
+                    yield Button("Select All", id="select_all", variant="primary")
+                    yield Button("Deselect All", id="deselect_all", variant="default")
+                    yield Button("Cancel", id="cancel")
+                    yield Button("Apply", id="apply", variant="primary")
+
+    def on_mount(self) -> None:
+        sel = self.query_one("#columns", SelectionList[str])
+        selected_keys = {key for key, _ in self._default}
+        for key, title in COLUMNS:
+            sel.add_option(key, f"{title} ({key})", key in selected_keys)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        sel = self.query_one("#columns", SelectionList[str])
+        if event.button.id == "select_all":
+            for option_id in sel.options:
+                sel.set_option_enabled(option_id, True)
+                sel.set_option_selected(option_id, True)
+        elif event.button.id == "deselect_all":
+            for option_id in sel.options:
+                sel.set_option_selected(option_id, False)
+        elif event.button.id == "cancel":
+            self.dismiss(None)
+        elif event.button.id == "apply":
+            selected = set(COLUMNS) - {
+                (key, title) for key, (_, title) in sel.options if key not in sel.selected
+            }
+            self.dismiss(selected)
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
 
 class LeaderboardPane(Vertical):
     def compose(self) -> ComposeResult:

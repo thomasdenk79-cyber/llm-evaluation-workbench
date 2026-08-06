@@ -106,6 +106,87 @@ class CampaignPlanningTests(unittest.TestCase):
         self.assertEqual("Local/Ollama", rows[0]["provider"])
         self.assertIn("launch_params", rows[0])
 
+    # -- VRAM headroom auto-tune tests ----------------------------------------
+
+    def test_vram_tune_proposal(self) -> None:
+        """VRAM headroom proposal returns consistent params for a known-sized model."""
+        # 7B Q4_K_M model ≈ 8 800 MB VRAM footprint
+        result = rb._derive_vram_params(
+            model_name="llama3.1:8b",
+            backend="llama_cpp",
+            headroom_pct=10,
+            available_vram_mb=24_000,
+            model_size_bytes=int(8.5 * 1024 * 1024 * 1024),
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("ngl", result)
+        self.assertIn("ctx_size", result)
+        self.assertIn("batch", result)
+        self.assertIsInstance(result["ngl"], int)
+        self.assertIsInstance(result["ctx_size"], int)
+        self.assertIsInstance(result["batch"], int)
+        # With 24 GB and 10 % headroom the 8.5 GB model fits completely
+        self.assertEqual(99, result["ngl"])
+        self.assertEqual(32768, result["ctx_size"])
+        self.assertEqual(512, result["batch"])
+
+    def test_vram_tune_ollama_args(self) -> None:
+        """Ollama backend returns ``num_gpu_layers`` and ``context_length``."""
+        result = rb._derive_vram_params(
+            model_name="qwen3:8b",
+            backend="ollama",
+            headroom_pct=10,
+            available_vram_mb=12_000,
+            model_params_billion=8.0,
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("num_gpu_layers", result)
+        self.assertIn("context_length", result)
+        self.assertIsInstance(result["num_gpu_layers"], int)
+        self.assertGreater(result["num_gpu_layers"], 0)
+        self.assertLessEqual(result["num_gpu_layers"], 99)
+
+    def test_vram_tune_llama_args(self) -> None:
+        """llama.cpp returns ``ngl``, ``ctx_size``, ``batch`` — partial offload when VRAM is tight."""
+        # 30 B model needs ~36 GB VRAM; a 12 GB GPU can only partially offload
+        result = rb._derive_vram_params(
+            model_name="qwen3:30b",
+            backend="llama_cpp",
+            headroom_pct=10,
+            available_vram_mb=12_000,
+            model_params_billion=30.0,
+        )
+        self.assertIsNotNone(result)
+        self.assertIn("ngl", result)
+        self.assertIn("ctx_size", result)
+        self.assertIn("batch", result)
+        self.assertLess(result["ngl"], 99)
+        self.assertGreater(result["ngl"], 0)
+        self.assertEqual(8192, result["ctx_size"])
+        self.assertEqual(128, result["batch"])
+
+    def test_vram_headroom_out_of_range(self) -> None:
+        """``_derive_vram_params`` returns ``None`` for headroom outside 1..20."""
+        self.assertIsNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=0, available_vram_mb=24_000)
+        )
+        self.assertIsNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=21, available_vram_mb=24_000)
+        )
+        self.assertIsNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=-5, available_vram_mb=24_000)
+        )
+        self.assertIsNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=10, available_vram_mb=None)
+        )
+        # Boundary values (1 % and 20 %) must succeed
+        self.assertIsNotNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=1, available_vram_mb=24_000)
+        )
+        self.assertIsNotNone(
+            rb._derive_vram_params("model", "ollama", headroom_pct=20, available_vram_mb=24_000)
+        )
+
     def test_ollama_recovery_starts_service_once(self) -> None:
         with patch.object(
             rb,
@@ -123,3 +204,82 @@ class CampaignPlanningTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigValidationTests(unittest.TestCase):
+    """Block 5 — Config validation and schema generation."""
+
+    def test_validate_valid_config(self) -> None:
+        """A fully specified config returns no errors and no warnings."""
+        config = {
+            "schema_version": "campaign-v2",
+            "backend": "ollama",
+            "runs": 1,
+            "timeout_sec": 900,
+            "vram_headroom_pct": 5,
+        }
+        errors, warnings = rb.validate_config(config)
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_validate_missing_schema(self) -> None:
+        """Missing schema_version produces a warning (legacy-compat)."""
+        config = {
+            "backend": "ollama",
+            "runs": 1,
+        }
+        errors, warnings = rb.validate_config(config)
+        self.assertFalse(errors, f"unexpected errors: {errors}")
+        self.assertTrue(
+            any("schema_version" in w for w in warnings),
+            f"expected schema_version warning, got: {warnings}",
+        )
+
+    def test_validate_invalid_backend(self) -> None:
+        """An unknown backend value produces a schema-level error."""
+        config = {
+            "schema_version": "campaign-v2",
+            "backend": "hypothetical-quantum",
+            "runs": 1,
+        }
+        errors, warnings = rb.validate_config(config)
+        self.assertTrue(
+            any("backend" in e for e in errors),
+            f"expected backend error, got: {errors}",
+        )
+
+    def test_vram_headroom_valid_range(self) -> None:
+        """vram_headroom_pct values 1-20 are accepted without errors."""
+        for value in (1, 5, 10, 20):
+            config = {
+                "schema_version": "campaign-v2",
+                "backend": "ollama",
+                "runs": 1,
+                "vram_headroom_pct": value,
+            }
+            errors, _ = rb.validate_config(config)
+            self.assertFalse(errors, f"vram_headroom_pct={value} should be valid, got: {errors}")
+
+    def test_vram_headroom_invalid_range(self) -> None:
+        """vram_headroom_pct values outside 1-20 produce errors."""
+        for value in (0, 21, -1):
+            config = {
+                "schema_version": "campaign-v2",
+                "backend": "ollama",
+                "runs": 1,
+                "vram_headroom_pct": value,
+            }
+            errors, _ = rb.validate_config(config)
+            self.assertTrue(
+                any("vram_headroom_pct" in e for e in errors),
+                f"vram_headroom_pct={value} should fail, got: {errors}",
+            )
+
+    def test_strict_config_aborts_on_warning(self) -> None:
+        """--strict-config with a valid campaign that has warnings exits 1."""
+        # benchmark.toml is fully valid (no warnings),
+        # local-campaign.toml is missing schema_version → 1 warning
+        exit_code = rb.main(["--config", str(rb.ROOT / "config" / "local-campaign.toml"),
+                             "--validate-config", "--strict-config"])
+        self.assertEqual(exit_code, 1,
+                         "--strict-config should exit 1 when warnings are present")

@@ -18,6 +18,7 @@ import datetime as _dt
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 import time
 import unittest
@@ -28,6 +29,7 @@ from agent_helper_eval import (
     capacity_profile,
     catalog,
     charts,
+    fork_build,
     historical_adapter,
     live_gates,
     local_lock,
@@ -4814,6 +4816,160 @@ class SerialCampaignCliWiringTests(unittest.TestCase):
             rc = campaign_cli._cmd_ollama_inventory_snapshot(args)
         self.assertEqual(rc, 0)
         mocked_discover.assert_called_once()
+
+
+class ForkBuildTests(unittest.TestCase):
+    """Deterministic tests for fork_build module.
+    Uses ``tempfile.TemporaryDirectory`` for filesystem isolation and
+    mocks for ``subprocess.run`` and ``shutil.which`` — never invokes a
+    real compiler or CMake."""
+
+    def _source_root(self, markers: list[str | Path] | None = None) -> Path:
+        """Create a minimal fake llama.cpp source checkout in a temp dir."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for marker in markers or ["CMakeLists.txt", "cmake", "ggml"]:
+            p = root / marker
+            p.mkdir(parents=True) if "/" in marker or "\\" in marker else p.touch()
+            if "/" in marker or "\\" in marker:
+                p.mkdir(parents=True, exist_ok=True)
+        return root
+
+    # -- is_source_tree --------------------------------------------------
+
+    def test_is_source_tree_true(self) -> None:
+        root = self._source_root()
+        self.assertTrue(fork_build.is_source_tree(root))
+
+    def test_is_source_tree_false_missing_cmake_dir(self) -> None:
+        root = self._source_root(["CMakeLists.txt", "ggml"])
+        self.assertFalse(fork_build.is_source_tree(root))
+
+    def test_is_source_tree_false_not_a_dir(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.assertFalse(fork_build.is_source_tree(Path(tmp.name) / "nope"))
+
+    # -- find_binary -----------------------------------------------------
+
+    def test_find_binary_existing(self) -> None:
+        root = self._source_root()
+        bin_path = root / "build" / "bin" / "llama-server"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.touch()
+        self.assertEqual(fork_build.find_binary(root), bin_path)
+
+    def test_find_binary_existing_exe(self) -> None:
+        root = self._source_root()
+        bin_path = root / "build" / "bin" / "llama-server.exe"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.touch()
+        self.assertEqual(fork_build.find_binary(root), bin_path)
+
+    def test_find_binary_missing(self) -> None:
+        root = self._source_root()
+        self.assertIsNone(fork_build.find_binary(root))
+
+    def test_find_binary_legacy_bin(self) -> None:
+        root = self._source_root()
+        bin_path = root / "bin" / "llama-server.exe"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.touch()
+        self.assertEqual(fork_build.find_binary(root), bin_path)
+
+    # -- build: missing toolchain -> install.md --------------------------
+
+    def test_build_missing_toolchain(self) -> None:
+        root = self._source_root()
+        with mock.patch.object(fork_build.shutil, "which", return_value=None):
+            result = fork_build.build(root)
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.install_md_path)
+        self.assertTrue(result.install_md_path.exists())
+        content = result.install_md_path.read_text(encoding="utf-8")
+        self.assertIn("Build Instructions", content)
+        self.assertIn("llama-server", content)
+
+    def test_build_not_a_source_tree(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        with mock.patch.object(fork_build.shutil, "which", return_value=None):
+            result = fork_build.build(root)
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.install_md_path)
+        self.assertFalse(result.success)
+
+    def test_build_existing_binary_skips_build(self) -> None:
+        root = self._source_root()
+        bin_path = root / "bin" / "llama-server"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.touch()
+        # build() checks toolchain before existing binary; mock them present
+        with mock.patch.object(fork_build.shutil, "which", side_effect=["/fake/cmake", "/fake/gcc"]):
+            result = fork_build.build(root)
+        self.assertTrue(result.success)
+        self.assertEqual(result.binary_path, bin_path)
+
+    def test_build_failure_emits_install_md(self) -> None:
+        root = self._source_root()
+        fake_cmake = Path("/fake/cmake")
+        fake_cl = Path("/fake/cl")
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="CMake Error: boom")
+
+        with mock.patch.object(fork_build.shutil, "which", side_effect=[str(fake_cmake), str(fake_cl)]), \
+             mock.patch.object(fork_build.subprocess, "run", side_effect=fake_run):
+            result = fork_build.build(root)
+        self.assertFalse(result.success)
+        self.assertIsNotNone(result.install_md_path)
+        content = result.install_md_path.read_text(encoding="utf-8")
+        self.assertIn("boom", content)
+
+    # -- write_install_md ------------------------------------------------
+
+    def test_write_install_md_creates_dirs_and_file(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = Path(tmp.name) / "src"
+        src.mkdir()
+        proj = Path(tmp.name) / "proj"
+        proj.mkdir()
+        md_path = fork_build.write_install_md(src, "sample error", project_root=proj)
+        self.assertEqual(md_path, proj / "docs" / "operations" / "install.md")
+        self.assertTrue(md_path.exists())
+        content = md_path.read_text(encoding="utf-8")
+        self.assertIn("sample error", content)
+        self.assertIn(str(src), content)
+
+    def test_write_install_md_truncates_very_long_errors(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = Path(tmp.name) / "src"
+        src.mkdir()
+        long_error = "x" * 5000
+        md_path = fork_build.write_install_md(src, long_error)
+        content = md_path.read_text(encoding="utf-8")
+        self.assertIn("(truncated for brevity)", content)
+
+    # -- can_rebuild -----------------------------------------------------
+
+    def test_can_rebuild_true(self) -> None:
+        root = self._source_root()
+        bin_path = root / "build" / "bin" / "llama-server"
+        bin_path.parent.mkdir(parents=True, exist_ok=True)
+        bin_path.touch()
+        self.assertTrue(fork_build.can_rebuild(bin_path))
+
+    def test_can_rebuild_false_no_source_ancestors(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fake_bin = Path(tmp.name) / "somewhere" / "llama-server.exe"
+        fake_bin.parent.mkdir(parents=True, exist_ok=True)
+        fake_bin.touch()
+        self.assertFalse(fork_build.can_rebuild(fake_bin))
 
 
 if __name__ == "__main__":

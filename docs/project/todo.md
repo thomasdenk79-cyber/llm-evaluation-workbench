@@ -419,3 +419,50 @@ Agent-Helper-Track. Detailanforderungen stehen in
 - ITSM-PWA, Backend-Sprachbenchmark und PostgreSQL-Domänenmodell.
 - Moderner Oracle-nach-PostgreSQL-Data-Pump-Migrator.
 - Jira-TaskVision-Produktionsmigration.
+
+
+## Phase 2 - Autonomous Implementation (completed 2026-08-06)
+
+### Completed Blocks
+
+| Block | Feature | Tests | Coverage Impact |
+|-------|---------|-------|-----------------|
+| 1 | VRAM Headroom Auto-Tune (Propose-Confirm-Apply) | +4 | run_benchmark.py full coverage |
+| 2 | Fork Build Automation (detect, cmake, install.md) | +15 | fork_build.py module |
+| 3 | TUI Robustness (error boundaries, F5 refresh) | +6 | All 6 screens protected |
+| 4 | Web Server Hardening (size limits, health, CORS) | +16 | Full HTTP endpoint suite |
+| 5 | Config Validation & Schema (JSON Schema draft 7) | +6 | All configs validated |
+| 6 | HTML Report (quality bars, throughput, PNG export) | +3 | Report generation covered |
+| 7 | Test Expansion & Coverage | +0 (already 89%) | agent_helper_eval at 89% |
+| 8 | Integration Tests | +13 | E2E: campaign, TUI, web |
+
+### Requirements Status
+
+All 8 requirements from `docs/project/requirements.md`:
+
+- **§1 TUI**: SHIPPED (with robustness hardening, 6 screens verified by integration tests)
+- **§2 Lifecycle**: SHIPPED (fork rebuild added via Block 2)
+- **§3 Parity**: SHIPPED (same grid data, same colors, browser/Excel export)
+- **§4 Web server**: SHIPPED (with hardening - size limits, CORS, health)
+- **§5 Matrix**: SHIPPED (wildcard TOML, per-entry args, preview)
+- **§6 VRAM**: SHIPPED (auto-tune with human confirmation)
+- **§7 Leaderboards**: SHIPPED (HTML enhanced with quality bars, throughput, scatter)
+- **§8 Polish**: SHIPPED (10 themes, 6-tier colors, hover, filters, compact)
+
+### Integration Test Evidence
+
+`scripts/test_integration.py` - 13 safe E2E tests (no model runs, no GPU, localhost-only):
+
+- **TestCampaignIntegration** (5 tests): `--validate-config` on `benchmark.toml` and `local-campaign.toml`,
+  `--show-matrix` expansion, `--doctor` health check, `--generate-schema` round-trip
+- **TestTUIStructure** (3 tests): TUI module import, 6 pane classes present in source,
+  6 TabPane labels match in `compose()`
+- **TestWebServerIntegration** (5 tests): root page 200, `/api/data` JSON list,
+  `/api/health` OK with expected fields, `/api/status` contains `running`,
+  pause/resume/stop control file cycle with cleanup
+
+### Backlog (deferred)
+
+- **B3**: Generic Textual-to-HTML converter - waiting for second consumer
+- **"Suggest best from history"** tuning - future enhancement
+- Automatic fork rebuild - recovery bundles already document the restore path

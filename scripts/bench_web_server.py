@@ -62,6 +62,9 @@ SUPPORTED_COMPRESSIONS = {"none", "gzip", "br", "zstd"}
 _DATA_RE = re.compile(r"const DATA=(\[.*?\]);", re.DOTALL)
 
 DEFAULT_COMPRESSION = "none"
+MAX_BODY = 1_000_000  # 1 MB — reject any POST with a larger declared body
+DEFAULT_BIND = "127.0.0.1"
+DEFAULT_PORT = 8766
 
 
 def extract_report_rows() -> list[dict]:
@@ -113,6 +116,43 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
         sys.stderr.write("[bench_web_server] " + (format % args) + "\n")
+
+    # -- lifecycle overrides -----------------------------------------
+    def end_headers(self) -> None:  # type: ignore[override]
+        """Inject CORS headers for localhost clients."""
+        if self.client_address[0] in ("127.0.0.1", "::1"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+        super().end_headers()
+
+    def _send_json_response(self, status_code: int, payload: dict) -> None:
+        """Minimal JSON response path (no compression) used by guards."""
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_no_report_page(self) -> None:
+        """Serve a friendly placeholder when no benchmark data has been generated yet."""
+        html = (
+            "<!DOCTYPE html>\n"
+            "<html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<title>Benchmark Report</title>\n"
+            "<style>"
+            "body{font-family:sans-serif;max-width:600px;margin:40px auto;padding:0 20px;color:#333;}"
+            "h1{margin-bottom:0.3em;}"
+            "p{color:#555;}"
+            "</style></head><body>\n"
+            "<h1>No benchmark data yet</h1>\n"
+            "<p>Run a benchmark campaign first, then reload this page.</p>\n"
+            "</body></html>"
+        )
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html.encode("utf-8"))))
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
 
     # -- helpers -----------------------------------------------------
     def _send_json(self, payload: dict | list, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -177,7 +217,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib signature
         parsed = urlparse(self.path)
         path = parsed.path
+
+        # Health-check endpoint (Block 4 hardening)
+        if path == "/api/health":
+            report_exists = REPORT_HTML.exists()
+            data: dict = {
+                "status": "ok",
+                "report_exists": report_exists,
+                "data_rows": len(extract_report_rows()) if report_exists else 0,
+            }
+            self._send_json_response(200, data)
+            return
+
         if path in ("/", "/index.html", "/report"):
+            # When the benchmark HTML report has not been generated yet, serve
+            # a friendly placeholder instead of a 404 (graceful degradation).
+            if not REPORT_HTML.exists():
+                self._send_no_report_page()
+                return
             self._send_file(REPORT_HTML, "text/html; charset=utf-8")
         elif path == "/api/data":
             self._send_json(extract_report_rows())
@@ -200,6 +257,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib signature
         parsed = urlparse(self.path)
+
+        # Block 4: enforce request-body size guard
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > MAX_BODY:
+            self._send_json_response(413, {"error": "Request too large"})
+            return
+
         match = re.match(r"^/api/control/(pause|resume|stop)$", parsed.path)
         if match:
             self._control_action(match.group(1))
@@ -215,6 +279,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compression", choices=sorted(SUPPORTED_COMPRESSIONS), default=DEFAULT_COMPRESSION,
                          help="Default compression when a request doesn't specify ?compression= (default: none).")
     return parser
+
+
+def create_server(
+    bind: tuple[str, int] = (DEFAULT_BIND, DEFAULT_PORT),
+) -> ThreadingHTTPServer:
+    """Factory for spawning a server instance (primarily used by tests)."""
+    return ThreadingHTTPServer(bind, Handler)
 
 
 def main(argv: list[str] | None = None) -> int:

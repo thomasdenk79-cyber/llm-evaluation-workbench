@@ -1,0 +1,112 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Benchmark Campaign Config",
+  "type": "object",
+  "properties": {
+    "benchmark": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "backend",
+        "runs"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "enum": [
+            "campaign-v2"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "llama_cpp",
+            "siemens",
+            "both",
+            "all"
+          ]
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 86400,
+          "default": 900
+        },
+        "vram_headroom_pct": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        },
+        "suites": {
+          "type": "string"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "benchmarks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "llama_server": {
+          "type": "string"
+        },
+        "llama_models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[^=]+=.+$"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "matrix_entry": {
+      "type": "object",
+      "required": [
+        "backend",
+        "models",
+        "benchmarks"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "llama_cpp"
+          ]
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "benchmarks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runner_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

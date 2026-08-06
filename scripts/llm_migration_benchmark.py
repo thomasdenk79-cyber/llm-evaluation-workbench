@@ -4329,6 +4329,9 @@ kbd{background:var(--panel-alt);border:1px solid var(--line);border-radius:4px;p
 .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px;margin-top:8px}
 .chart{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .chart h2{font-size:12px;margin:0 0 6px;color:var(--muted)}
+.chart h2 button{font-size:10px;padding:1px 6px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:var(--muted);cursor:pointer;margin-left:8px;transition:opacity .15s}
+.chart h2 button:hover:not(:disabled){background:var(--accent);color:#fff}
+.chart h2 button:disabled{opacity:.35;cursor:default}
 .bar{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:11px}.bar label{width:145px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar i{height:10px;background:var(--accent);border-radius:3px;min-width:2px}.bar em{font-style:normal;color:var(--muted);width:48px;text-align:right}
 .leader-row{display:grid;grid-template-columns:24px minmax(100px,1fr) 58px 68px;gap:6px;align-items:center;padding:3px 0;font-size:11px;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
 .leader-row:last-child{border-bottom:0}.leader-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.leader-row span,.leader-row em{text-align:right;font-style:normal}.leader-row .rank{color:var(--accent);text-align:left;font-weight:800}
@@ -4345,6 +4348,9 @@ const tierFormatter=(field,decimals,suffix)=>cell=>{const raw=cell.getValue();if
 const pctFormatter=cell=>numFmt(cell.getValue(),1,'%');
 const gbFormatter=cell=>numFmt(cell.getValue(),2,' GB');
 const tokFormatter=cell=>numFmt(cell.getValue(),1,' tok/s');
+const getTierColor=(v)=>{if(v===null||v===undefined||v==='')return 'var(--line)';const n=parseFloat(v);if(isNaN(n))return 'var(--line)';if(n>=90)return '#16a34a';if(n>=80)return '#22c55e';if(n>=70)return '#ca8a04';if(n>=60)return '#f97316';if(n>=50)return '#ef4444';return '#e11d48';};
+const qualityBarFormatter=cell=>{const raw=cell.getValue();if(raw===null||raw===undefined||raw==='')return '<span class="muted">—</span>';const n=parseFloat(raw);if(isNaN(n))return '<span class="muted">—</span>';const pct=Math.min(100,Math.round(n));const color=getTierColor(n);return '<div style="display:inline-flex;align-items:center;gap:5px;"><div style="background:'+color+';height:18px;width:'+pct+'%;border-radius:3px;min-width:2px;"></div><span class="tier-'+(n>=90?6:n>=80?5:n>=70?4:n>=60?3:n>=50?2:1)+'">'+esc(raw)+'</span></div>';};
+const throughputBarFormatter=cell=>{const raw=cell.getValue();const d=cell.getData();const maxSpeed=Math.max(...DATA.filter(r=>r.status==='done'&&Number.isFinite(Number(r.tok_s))).map(r=>Number(r.tok_s)),1);const n=parseFloat(raw);if(isNaN(n)||n<=0)return '<span class="muted">—</span>';const pct=Math.min(100,Math.round((n/maxSpeed)*100));return '<div style="display:inline-flex;align-items:center;gap:5px;"><div style="background:var(--accent);height:18px;width:'+pct+'%;border-radius:3px;min-width:2px;"></div><span>'+n.toFixed(1)+'</span></div>';};
 const paramsFormatter=cell=>{const raw=String(cell.getValue()??'');if(!raw)return '<span class="muted">—</span>';let preview=raw.replace(/\\s+/g,' ').trim();if(preview.length>54)preview=preview.slice(0,54)+'…';return '<span class="params-preview">'+esc(preview)+'</span>';};
 const paramsTooltip=(e,cell)=>{const raw=String(cell.getValue()??'');if(!raw)return false;try{return JSON.stringify(JSON.parse(raw),null,2);}catch(err){return raw;}};
 const errorFormatter=cell=>{const v=String(cell.getValue()??'');if(!v)return '';const span=document.createElement('span');span.className='copy';span.title='Click to copy';span.textContent=v.length>60?v.slice(0,60)+'…':v;span.onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(v);return span;};
@@ -4358,14 +4364,14 @@ const columns=[
  {title:'Started',field:'datetime_run_started',headerFilter:'input',width:110},
  {title:'Updated',field:'last_update',headerFilter:'input',width:110},
  {title:'Elapsed',field:'elapsed',formatter:cell=>{const d=cell.getData();const tier=d.wall_seconds_tier??0;return '<span class="tier-'+tier+'">'+esc(cell.getValue()??'')+'</span>';},headerFilter:'input',hozAlign:'right',width:90},
- {title:'Tok/s',field:'tok_s',formatter:tokFormatter,headerFilter:'input',hozAlign:'right',width:90},
+ {title:'Tok/s',field:'tok_s',formatter:throughputBarFormatter,headerFilter:'input',hozAlign:'right',width:130},
  {title:'CPU',field:'cpu_percent',formatter:pctFormatter,headerFilter:'input',hozAlign:'right',width:80},
  {title:'GPU',field:'gpu_percent',formatter:pctFormatter,headerFilter:'input',hozAlign:'right',width:80},
  {title:'VRAM used',field:'vram_used_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:100},
  {title:'VRAM free',field:'vram_free_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:100},
  {title:'RAM',field:'ram_gb',formatter:gbFormatter,headerFilter:'input',hozAlign:'right',width:90},
  {title:'Errors',field:'system_errors',formatter:errorFormatter,headerFilter:'input',minWidth:140},
- {title:'Heuristic',field:'heuristic_score',formatter:tierFormatter('heuristic_score',1,'%'),headerFilter:'input',hozAlign:'right',width:100},
+ {title:'Heuristic',field:'heuristic_score',formatter:qualityBarFormatter,headerFilter:'input',hozAlign:'right',width:150},
  {title:'Score',field:'rating_score',formatter:tierFormatter('rating_score',1,''),headerFilter:'input',hozAlign:'right',width:90},
  {title:'Suitability',field:'rating',headerFilter:'input',minWidth:170},
  {title:'Params',field:'launch_params',formatter:paramsFormatter,tooltip:paramsTooltip,headerFilter:'input',minWidth:150},
@@ -4487,6 +4493,19 @@ const renderScatter=()=>{
  box.innerHTML='<svg class="scatter-svg" viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Overall score versus throughput">'+grid+'<line class="scatter-axis" x1="'+left+'" y1="'+top+'" x2="'+left+'" y2="'+(height-bottom)+'"/><line class="scatter-axis" x1="'+left+'" y1="'+(height-bottom)+'" x2="'+(width-right)+'" y2="'+(height-bottom)+'"/>'+points+'<text class="scatter-label" x="2" y="12">Score</text><text class="scatter-label" x="'+(width-76)+'" y="'+(height-5)+'">Throughput →</text></svg>';
 };
 renderOverall();renderScatter();
+const chartScatter=document.getElementById('chart-scatter');
+const exportScatterBtn=document.getElementById('export-scatter-btn');
+if(exportScatterBtn&&chartScatter){
+  exportScatterBtn.disabled=!chartScatter.querySelector('svg');
+  exportScatterBtn.onclick=()=>{
+    const svg=chartScatter.querySelector('svg');
+    if(!svg)return;
+    const data=(new XMLSerializer()).serializeToString(svg);
+    const img=new Image();
+    img.onload=()=>{const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').drawImage(img,0,0);const link=document.createElement('a');link.download='score-vs-throughput.png';link.href=c.toDataURL('image/png');link.click();};
+    img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(data)));
+  };
+}
 renderBars('chart-speed','tok_s',' tok/s');renderBars('chart-quality','heuristic_score','%');
 document.getElementById('reset').onclick=()=>{
  document.getElementById('search').value='';
@@ -4526,7 +4545,7 @@ document.getElementById('reset').onclick=()=>{
         "<div id=\"groupbar\"><span class=\"hint\">Drag a column header here to group by it (drop another to add a second/third grouping level; drag chips to reorder).</span></div>"
         "<div id=\"grid\"></div>"
         "<section class=\"charts\"><div class=\"chart\"><h2>Top 5 overall (average score · throughput)</h2><div id=\"chart-overall\"></div></div>"
-        "<div class=\"chart\"><h2>Overall score vs throughput</h2><div id=\"chart-scatter\"></div></div>"
+         "<div class=\"chart\"><h2>Overall score vs throughput <button id=\"export-scatter-btn\" disabled>Export PNG</button></h2><div id=\"chart-scatter\"></div></div>"
         "<div class=\"chart\"><h2>Top throughput (completed runs)</h2><div id=\"chart-speed\"></div></div>"
         "<div class=\"chart\"><h2>Top heuristic quality (completed runs)</h2><div id=\"chart-quality\"></div></div></section>"
         f"<script src=\"{html.escape(tabulator_rel)}/tabulator.min.js\"></script>"

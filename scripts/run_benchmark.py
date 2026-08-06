@@ -55,6 +55,137 @@ DEFAULT_SIEMENS_MODELS = [
     "ministral-3-14b-instruct-2512",
 ]
 
+# --------------------------------------------------------------------------
+# Block 5 — Config Validation & Schema
+# --------------------------------------------------------------------------
+
+BENCHMARK_SCHEMA = {
+    "required": ["schema_version", "backend", "runs"],
+    "fields": {
+        "schema_version": {"type": "str", "values": ["campaign-v2"]},
+        "backend": {"type": "str", "values": ["ollama", "llama_cpp", "siemens", "both", "all"]},
+        "runs": {"type": "int", "min": 1, "max": 100},
+        "timeout_sec": {"type": "int", "min": 10, "max": 86400, "default": 900},
+        "vram_headroom_pct": {"type": "int", "min": 1, "max": 20, "default": 5},
+        "suites": {"type": "str_or_list"},
+        "models": {"type": "list", "optional": True},
+        "benchmarks": {"type": "list", "optional": True},
+        "llama_server": {"type": "str", "required_if_backend": ["llama_cpp", "both"], "file_exists": True},
+        "llama_models": {"type": "list", "format": "NAME=PATH", "path_exists": True, "optional": True},
+    },
+}
+
+
+def validate_config(config: dict) -> tuple[list[str], list[str]]:
+    """Validate campaign config against BENCHMARK_SCHEMA.
+
+    Returns (errors, warnings).
+    errors  — must be fixed before a run.
+    warnings — advisory; run may proceed.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # --- Required fields --------------------------------------------------
+    for field in BENCHMARK_SCHEMA["required"]:
+        if field not in config:
+            # schema_version missing is a warning (legacy configs)
+            if field == "schema_version":
+                warnings.append(f"Missing recommended field: {field}")
+            else:
+                errors.append(f"Missing required field: {field}")
+
+    # --- Conditional requirements -----------------------------------------
+    backend = config.get("backend", "")
+    if backend in BENCHMARK_SCHEMA["fields"].get("llama_server", {}).get("required_if_backend", []):
+        llama_server = config.get("llama_server")
+        if not llama_server:
+            errors.append("llama_server is required when backend is 'llama_cpp' or 'both'")
+        else:
+            lp = Path(llama_server)
+            if not lp.is_absolute():
+                lp = ROOT / lp
+            if not lp.is_file():
+                errors.append(f"llama_server path does not exist: {lp}")
+
+    # --- Type and value checks --------------------------------------------
+    for field, spec in BENCHMARK_SCHEMA["fields"].items():
+        if field not in config:
+            continue
+        val = config[field]
+
+        if spec["type"] == "int":
+            if not isinstance(val, int) or isinstance(val, bool):
+                errors.append(f"{field}: expected int, got {type(val).__name__}")
+                continue
+            if "min" in spec and val < spec["min"]:
+                errors.append(f"{field}: {val} < minimum {spec['min']}")
+                continue
+            if "max" in spec and val > spec["max"]:
+                errors.append(f"{field}: {val} > maximum {spec['max']}")
+
+        elif spec["type"] == "str" and "values" in spec:
+            if val not in spec["values"]:
+                errors.append(f"{field}: '{val}' not in {spec['values']}")
+
+        # llama_models format check
+        if spec.get("format") == "NAME=PATH" and isinstance(val, list):
+            for entry in val:
+                if "=" not in str(entry):
+                    errors.append(f"llama_models entry lacks NAME=PATH format: {entry}")
+
+    return errors, warnings
+
+
+def validate_matrix(matrix_entries: list[dict]) -> list[str]:
+    """Return validation errors for each [[matrix]] entry."""
+    errors: list[str] = []
+    for i, entry in enumerate(matrix_entries):
+        if "backend" not in entry:
+            errors.append(f"matrix[{i}]: missing 'backend'")
+        if "models" not in entry and "benchmarks" not in entry:
+            errors.append(f"matrix[{i}]: must specify models or benchmarks")
+    return errors
+
+
+def generate_json_schema() -> dict:
+    """Generate JSON Schema draft 7 for campaign TOML (converted to JSON structure)."""
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Benchmark Campaign Config",
+        "type": "object",
+        "properties": {
+            "benchmark": {
+                "type": "object",
+                "required": ["schema_version", "backend", "runs"],
+                "properties": {
+                    "schema_version": {"type": "string", "enum": ["campaign-v2"]},
+                    "backend": {"type": "string", "enum": ["ollama", "llama_cpp", "siemens", "both", "all"]},
+                    "runs": {"type": "integer", "minimum": 1, "maximum": 100},
+                    "timeout_sec": {"type": "integer", "minimum": 10, "maximum": 86400, "default": 900},
+                    "vram_headroom_pct": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    "suites": {"type": "string"},
+                    "models": {"type": "array", "items": {"type": "string"}},
+                    "benchmarks": {"type": "array", "items": {"type": "string"}},
+                    "llama_server": {"type": "string"},
+                    "llama_models": {"type": "array", "items": {"type": "string", "pattern": "^[^=]+=.+$"}},
+                }
+            }
+        },
+        "definitions": {
+            "matrix_entry": {
+                "type": "object",
+                "required": ["backend", "models", "benchmarks"],
+                "properties": {
+                    "backend": {"type": "string", "enum": ["ollama", "llama_cpp"]},
+                    "models": {"type": "array", "items": {"type": "string"}},
+                    "benchmarks": {"type": "array", "items": {"type": "string"}},
+                    "runner_args": {"type": "array", "items": {"type": "string"}},
+                }
+            }
+        }
+    }
+
 
 def _repo_path(value: str | Path) -> Path:
     path = Path(value)
@@ -90,7 +221,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--show-matrix", action="store_true",
                    help="Print the expanded [[matrix]] wildcard plan (backend/model/benchmark) and exit; no run.")
     p.add_argument("--validate-config", action="store_true",
-                   help="Validate the campaign and print its resolved plan without running it.")
+                    help="Validate the campaign and print its resolved plan without running it.")
+    p.add_argument("--strict-config", action="store_true",
+                    help="With --validate-config, also abort on warning-level issues (exit 1).")
+    p.add_argument("--generate-schema", action="store_true",
+                    help="Write JSON Schema (draft 7) for campaign configs to config/benchmark.schema.json and exit.")
     p.add_argument("--doctor", action="store_true",
                    help="Check campaign, backend availability, model paths, and result directories.")
     p.add_argument("--list-models", action="store_true", help="List installed Ollama models and configured GGUFs.")
@@ -395,6 +530,164 @@ def _unload_ollama() -> None:
             names.append(parts[0])
     for name in names:
         subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=30, check=False)
+
+
+# --------------------------------------------------------------------------
+# VRAM headroom auto-tune helpers (Block 1)
+# --------------------------------------------------------------------------
+
+#: Approximate bytes-per-parameter for Q4_K_M quantisation on disk / in VRAM.
+_Q4_K_M_BYTES_PER_PARAM: float = 1.25
+
+#: Human-readable descriptions for the tunable launch parameters derived here.
+VRAM_PARAM_DESCRIPTIONS: dict[str, str] = {
+    "ngl": (
+        "Number of GPU layers to offload (llama.cpp --ngl). "
+        "Higher values move more of the model to VRAM for speed."
+    ),
+    "num_gpu_layers": (
+        "Number of GPU layers to offload (Ollama -ngl). "
+        "Equivalent to llama.cpp --ngl; set via Ollama modelfile."
+    ),
+    "ctx_size": (
+        "Context window size (llama.cpp --ctx-size). "
+        "Larger context uses more VRAM for the KV cache."
+    ),
+    "context_length": (
+        "Context window size (Ollama num_ctx). "
+        "Controls token history the model can attend to."
+    ),
+    "batch": (
+        "Internal batch size (llama.cpp --batch). "
+        "Controls how many tokens are processed per pass."
+    ),
+}
+
+#: Safe documented defaults for the tunable parameters.
+DEFAULT_VRAM_PARAMS: dict[str, Any] = {
+    "ngl": 99,
+    "num_gpu_layers": 99,
+    "ctx_size": 8192,
+    "context_length": 8192,
+    "batch": 512,
+}
+
+
+def _estimate_total_layers(params_billion: float | None, size_mb: float | None) -> int:
+    """Estimate the total number of transformer layers a model has.
+
+    Uses the well-known LLaMA-family progression:
+    7B → 32 layers, 13B → 40, 30B → 60, 70B → 80.
+    Extrapolates linearly for models that don't match exactly.
+    """
+    if params_billion is not None and params_billion > 0:
+        # 7B model is the reference point (32 layers)
+        return max(12, int(params_billion / 7.0 * 32 + 0.5))
+    if size_mb is not None and size_mb > 0:
+        # Infer params from GGUF size: Q4_K_M ≈ 1.25 bytes/param
+        inferred_params = size_mb * 1024 * 1024 / _Q4_K_M_BYTES_PER_PARAM / 1e9
+        return max(12, int(inferred_params / 7.0 * 32 + 0.5))
+    return 32  # conservative fallback
+
+
+def _derive_vram_params(
+    model_name: str,
+    backend: str,
+    headroom_pct: int,
+    available_vram_mb: float | None,
+    *,
+    model_size_bytes: int | None = None,
+    model_params_billion: float | None = None,
+) -> dict | None:
+    """Derive per-model launch parameters from a VRAM headroom target.
+
+    Returns a dict of backend-specific parameters, or **None** when
+    ``available_vram_mb`` is unavailable *or* ``headroom_pct`` is out of the
+    supported 1-20 range.
+
+    Formula: ``available_for_model = available_vram_mb * (1 - headroom_pct / 100)``
+
+    For Ollama: computes ``num_gpu_layers`` and ``context_length``.
+    For llama.cpp: computes ``ngl``, ``ctx_size``, and ``batch``.
+
+    Estimates model VRAM from either ``model_size_bytes`` (on-disk GGUF) or
+    ``model_params_billion`` × 1.25 bytes/param (Q4_K_M quantisation).
+    When neither is known, conservative defaults are returned.
+    """
+    # --- Validate inputs ---
+    if available_vram_mb is None or available_vram_mb <= 0:
+        return None
+    if not isinstance(headroom_pct, (int, float)):
+        return None
+    if not (1 <= headroom_pct <= 20):
+        return None
+
+    available_for_model = available_vram_mb * (1.0 - headroom_pct / 100.0)
+
+    # --- Estimate total model VRAM footprint in MB ---
+    model_vram_mb: float | None = None
+    if model_size_bytes is not None and model_size_bytes > 0:
+        model_vram_mb = model_size_bytes / (1024 * 1024)
+    elif model_params_billion is not None and model_params_billion > 0:
+        # Q4_K_M quantised model in VRAM ≈ params * 1.25 bytes
+        model_vram_mb = model_params_billion * 1e9 * _Q4_K_M_BYTES_PER_PARAM / (1024 * 1024)
+
+    total_layers = _estimate_total_layers(model_params_billion, model_vram_mb)
+
+    if model_vram_mb is not None and model_vram_mb > 0:
+        fits_completely = model_vram_mb <= available_for_model
+        layer_vram_mb = model_vram_mb / max(total_layers, 1)
+        if layer_vram_mb and layer_vram_mb > 0:
+            gpu_layers = int(available_for_model / layer_vram_mb)
+            ngl = max(1, min(gpu_layers, total_layers)) if not fits_completely else 99
+        else:
+            ngl = 99
+    else:
+        # Cannot estimate — return conservative defaults
+        ngl = 99
+        fits_completely = True
+
+    # Context size scales with the remaining headroom margin
+    if fits_completely:
+        ctx_size = 32768
+    else:
+        ctx_size = 8192
+
+    # Batch size: smaller when not all layers fit (to reduce peak VRAM)
+    batch = 128 if ngl < total_layers else 512
+
+    if backend == "ollama":
+        return {
+            "num_gpu_layers": ngl,
+            "context_length": ctx_size,
+        }
+    if backend == "llama_cpp":
+        return {
+            "ngl": ngl,
+            "ctx_size": ctx_size,
+            "batch": batch,
+        }
+
+    # Unknown or cloud backend — nothing to tune
+    return None
+
+
+def _read_available_vram_mb() -> float | None:
+    """Query nvidia-smi for total GPU memory (first GPU only).
+
+    Returns None on any failure (missing CLI, non-zero exit, parse error).
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return float(result.stdout.splitlines()[0].strip())
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError, ZeroDivisionError):
+        return None
 
 
 def _wait_for_resume(pause_file: Path) -> None:
@@ -821,7 +1114,13 @@ def preview_campaign(config_path: Path) -> list[dict[str, Any]]:
 
 
 def validate_campaign(config_path: Path) -> list[str]:
-    """Return user-actionable validation errors without starting a run."""
+    """Return user-actionable validation errors without starting a run.
+
+    Merges field-level schema validation (validate_config) with the
+    existing campaign-plan validation (model resolution, benchmark files).
+    Schema warnings are not elevated to errors here; callers of
+    --validate-config --strict-config do their own escalation.
+    """
     errors: list[str] = []
     if not config_path.is_file():
         return [f"configuration not found: {config_path}"]
@@ -829,6 +1128,19 @@ def validate_campaign(config_path: Path) -> list[str]:
         cfg = _config(config_path)
     except (OSError, ValueError) as exc:
         return [f"invalid TOML: {exc}"]
+
+    # --- Schema-level field validation (Block 5) --------------------------
+    cfg_errors, cfg_warnings = validate_config(cfg)
+    errors.extend(cfg_errors)
+
+    # --- Matrix validation (Block 5) --------------------------------------
+    try:
+        matrix = _load_matrix(config_path, include_synthetic=False)
+    except Exception:
+        matrix = []
+    errors.extend(validate_matrix(matrix))
+
+    # --- Campaign-plan validation (existing logic) ------------------------
     backend = str(cfg.get("backend", "both"))
     if backend not in {"ollama", "llama_cpp", "siemens", "both", "all"}:
         errors.append(f"unsupported backend: {backend}")
@@ -842,7 +1154,7 @@ def validate_campaign(config_path: Path) -> list[str]:
         groups = preview_campaign(config_path)
     except Exception as exc:
         errors.append(f"campaign expansion failed: {exc}")
-        return errors
+        return list(dict.fromkeys(errors))
     if not groups:
         errors.append("campaign resolves to zero execution groups")
     for group in groups:
@@ -916,6 +1228,16 @@ def main(argv: list[str] | None = None) -> int:
     managed = _model_management(args, cfg)
     if managed is not None:
         return managed
+
+    # --- Block 5: --generate-schema (no config dependency) ----------------
+    if args.generate_schema:
+        schema = generate_json_schema()
+        schema_path = ROOT / "config" / "benchmark.schema.json"
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        print(f"JSON Schema written to {schema_path}")
+        return 0
+
     if args.doctor:
         if config_path is None:
             print("No campaign config found; pass --config PATH.")
@@ -925,14 +1247,44 @@ def main(argv: list[str] | None = None) -> int:
         if config_path is None:
             print("No campaign config found; pass --config PATH.")
             return 2
+        # Run schema-level field validation to capture both errors and warnings
+        cfg_err, cfg_warn = validate_config(cfg)
+        # Also check matrix entries if present
+        try:
+            matrix = _load_matrix(config_path, include_synthetic=False)
+        except Exception:
+            matrix = []
+        matrix_errors = validate_matrix(matrix)
+
+        # Print warnings
+        for warning in cfg_warn:
+            print(f"[WARNING] {warning}")
+        for merr in matrix_errors:
+            print(f"[ERROR] {merr}")
+
+        # Existing full campaign validation (includes schema errors already)
         errors = validate_campaign(config_path)
         if errors:
             print("Campaign is invalid:")
             for error in errors:
                 print(f"  - {error}")
+            # --strict-config: warnings also abort
+            if args.strict_config or cfg_warn:
+                print(f"\nValidation failed ({len(errors)} error(s), {len(cfg_warn)} warning(s)).")
+            else:
+                print(f"\nValidation failed ({len(errors)} error(s)).")
             return 2
         groups = preview_campaign(config_path)
-        print(f"Campaign is valid: {len(groups)} execution groups.")
+        if cfg_warn and args.strict_config:
+            print(f"Campaign is valid but has {len(cfg_warn)} warning(s):")
+            for warning in cfg_warn:
+                print(f"  [WARNING] {warning}")
+            print("Aborting because --strict-config treats warnings as errors.")
+            return 1
+        if cfg_warn:
+            print(f"Campaign is valid: {len(groups)} execution group(s) ({len(cfg_warn)} warning(s)).")
+        else:
+            print(f"Campaign is valid: {len(groups)} execution groups.")
         return 0
     if args.show_matrix:
         if config_path is None:

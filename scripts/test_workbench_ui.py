@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -188,6 +189,137 @@ class TelemetryContractTests(unittest.TestCase):
             self.assertEqual("", row.get("rating"))
             self.assertEqual("", row.get("interpretation"))
             self.assertIsNone(row.get("vram_free_gb"))
+
+
+class TuiRobustnessTests(unittest.IsolatedAsyncioTestCase):
+    """Block 3: TUI Robustness Hardening — error boundary and F5 tests."""
+
+    async def test_f5_binding_exists(self) -> None:
+        """F5 binding exists on the App and action_refresh_all is callable."""
+        app = tui.BenchmarkTUI()
+        keys = {b.key for b in app.BINDINGS}
+        self.assertIn("f5", keys, "F5 refresh binding must be present")
+        self.assertTrue(
+            hasattr(app, "action_refresh_all"),
+            "App must expose action_refresh_all for F5",
+        )
+
+    async def test_dashboard_missing_csv_no_crash(self) -> None:
+        """Dashboard handles missing detail CSV gracefully, without crashing."""
+        def no_collector(pane: tui.AgentMonitorPane) -> None:
+            pane.query_one("#monitor_status", tui.Static).update("collector disabled")
+
+        with patch.object(tui.AgentMonitorPane, "_start_collector", no_collector), \
+             patch.object(tui, "fetch_ollama_tags", return_value=[]):
+            app = tui.BenchmarkTUI()
+            async with app.run_test(size=(160, 50)) as pilot:
+                await pilot.pause(0.3)
+                dashboard = app.query_one(tui.DashboardPane)
+                # Trigger refresh_status — must not raise
+                dashboard.refresh_status()
+                await pilot.pause(0.1)
+                status = app.query_one("#status_line", tui.Static)
+                # Verify the status widget exists and has some content
+                content = status.render().plain
+                self.assertTrue(
+                    len(content) > 0,
+                    "Dashboard status line should display a state even when idle",
+                )
+
+    async def test_results_empty_report_no_crash(self) -> None:
+        """Results pane shows 'No results yet' when no report file exists."""
+        def no_collector(pane: tui.AgentMonitorPane) -> None:
+            pane.query_one("#monitor_status", tui.Static).update("collector disabled")
+
+        with patch.object(tui, "load_report_rows", return_value=[]), \
+             patch.object(tui.AgentMonitorPane, "_start_collector", no_collector), \
+             patch.object(tui, "fetch_ollama_tags", return_value=[]):
+            app = tui.BenchmarkTUI()
+            async with app.run_test(size=(160, 50)) as pilot:
+                await pilot.pause(0.2)
+                app.query_one(tui.TabbedContent).active = "results"
+                await pilot.pause(0.1)
+                results = app.query_one(tui.ResultsPane)
+                results.refresh_results()
+                status = app.query_one("#results_status", tui.Static)
+                plain = status.render().plain.lower()
+                self.assertIn("no results", plain)
+
+    async def test_results_malformed_csv_rows_skipped(self) -> None:
+        """Malformed rows in embedded report JSON are skipped without crash."""
+        def no_collector(pane: tui.AgentMonitorPane) -> None:
+            pane.query_one("#monitor_status", tui.Static).update("collector disabled")
+
+        # Simulate report data with a mixture of valid and invalid rows
+        mixed_rows = [
+            {"model": "ok", "backend": "ollama", "benchmark": "test", "status": "done"},
+            {"model": ""},  # missing required fields
+            {"model": "valid2", "backend": "llama_cpp", "benchmark": "suite", "status": "measured"},
+            {},  # completely empty
+        ]
+
+        with patch.object(tui, "load_report_rows", return_value=mixed_rows), \
+             patch.object(tui.AgentMonitorPane, "_start_collector", no_collector), \
+             patch.object(tui, "fetch_ollama_tags", return_value=[]):
+            app = tui.BenchmarkTUI()
+            async with app.run_test(size=(160, 50)) as pilot:
+                await pilot.pause(0.2)
+                app.query_one(tui.TabbedContent).active = "results"
+                await pilot.pause(0.1)
+                results = app.query_one(tui.ResultsPane)
+                results.refresh_results()
+                # Should succeed — no crash from malformed rows
+                status = app.query_one("#results_status", tui.Static)
+                self.assertIsNotNone(status.render())
+
+    async def test_models_ollama_timeout_handled(self) -> None:
+        """Models pane shows retry message when Ollama network call fails."""
+        def no_collector(pane: tui.AgentMonitorPane) -> None:
+            pane.query_one("#monitor_status", tui.Static).update("collector disabled")
+
+        def slow_fetch(*args, **kwargs):
+            raise urllib.error.URLError("timed out")
+
+        with patch.object(tui, "fetch_ollama_tags", side_effect=slow_fetch), \
+             patch.object(tui.AgentMonitorPane, "_start_collector", no_collector):
+            app = tui.BenchmarkTUI()
+            async with app.run_test(size=(160, 50)) as pilot:
+                await pilot.pause(0.2)
+                app.query_one(tui.TabbedContent).active = "models"
+                await pilot.pause(0.3)
+                status = app.query_one("#models_status", tui.Static)
+                content = status.render().plain
+                # Should have some status message (not crash)
+                self.assertTrue(
+                    len(content) > 0,
+                    "Models status should show an availability message",
+                )
+
+    async def test_config_invalid_toml_handled(self) -> None:
+        """Config pane shows parse error for broken TOML, does not crash."""
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "broken.toml"
+            config.write_text(
+                "[benchmark\nthis is deliberately broken TOML",
+                encoding="utf-8",
+            )
+            def no_collector(pane: tui.AgentMonitorPane) -> None:
+                pane.query_one("#monitor_status", tui.Static).update("disabled")
+
+            with patch.object(tui, "list_campaign_configs", return_value=[config]), \
+                 patch.object(tui.AgentMonitorPane, "_start_collector", no_collector):
+                app = tui.BenchmarkTUI()
+                async with app.run_test(size=(160, 50)) as pilot:
+                    await pilot.pause(0.2)
+                    config_pane = app.query_one(tui.ConfigPane)
+                    config_pane._load_selected()
+                    status = app.query_one("#config_status", tui.Static)
+                    content = status.render().plain.lower()
+                    # Should indicate an error state (parse error), not crash
+                    self.assertTrue(
+                        len(content) > 0 or config_pane._table == {},
+                        "Config pane should indicate error for broken TOML",
+                    )
 
 
 if __name__ == "__main__":

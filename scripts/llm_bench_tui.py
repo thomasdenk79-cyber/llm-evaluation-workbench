@@ -17,6 +17,7 @@ this file implements a slice of.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import importlib.util
 import json
@@ -35,6 +36,7 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import agent_helper_eval.fork_build as _fork_build  # noqa: E402  (Block 2: fork build automation)
 import run_benchmark as rb  # noqa: E402  (reuse the existing control protocol, never duplicate it)
 
 from rich.text import Text  # noqa: E402
@@ -187,7 +189,8 @@ class HelpScreen(ModalScreen[None]):
                 "  Type / to filter. Click a header to sort. The browser report adds\n"
                 "  per-column filters and ordered multi-column grouping.\n\n"
                 "KEYS\n"
-                "  1–6 tabs · S start · P pause · R resume · X stop · / filter · H help · Q quit\n\n"
+                "  1–6 tabs · S start · P pause · R resume · X stop · F5 refresh · "
+                "/ filter · H help · Q quit\n\n"
                 "CLI\n"
                 "  python scripts\\run_benchmark.py\n"
                 "  python scripts\\run_benchmark.py --config config\\benchmark.toml --show-matrix\n"
@@ -202,6 +205,60 @@ class HelpScreen(ModalScreen[None]):
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             self.dismiss()
+
+
+class TuneConfirmScreen(ModalScreen[bool]):
+    """Shows the VRAM-tune diff and requires explicit Apply / Cancel confirmation.
+
+    Part of the Propose → Confirm → Apply control contract — no configuration
+    is modified until the operator clicks **Apply**.
+    """
+
+    DEFAULT_CSS = """
+    TuneConfirmScreen { align: center middle; }
+    #tune-dialog {
+        width: 110;
+        height: 40;
+        border: round #55aaff;
+        background: #101215;
+        padding: 1 2;
+    }
+    #tune-title { height: 2; color: #55ccff; text-style: bold; }
+    #tune-body { height: 1fr; color: #c5ccd2; overflow-y: auto; }
+    #tune-body .diff-current { color: #8b949e; }
+    #tune-body .diff-proposed { color: #70e1a1; }
+    #tune-body .diff-changed { color: #ffd166; }
+    #tune-body .diff-none { color: #8b949e; }
+    #tune-actions { height: 2; background: #15191d; }
+    """
+
+    def __init__(self, proposal_lines: list[str]) -> None:
+        super().__init__()
+        self._lines = proposal_lines
+
+    def compose(self) -> ComposeResult:
+        with Container(id="tune-dialog"):
+            yield Static("VRAM Tune · Propose → Confirm → Apply", id="tune-title")
+            with VerticalScroll(id="tune-body"):
+                for line in self._lines:
+                    yield Static(line)
+            yield ActionStrip(
+                ("A", "Apply", "#28c85a"),
+                ("Esc", "Cancel", "#ff5555"),
+                id="tune-actions",
+            )
+
+    def on_action_strip_selected(self, event: ActionStrip.Selected) -> None:
+        if event.action == "apply":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+        elif event.key == "a":
+            self.dismiss(True)
 
 
 class InfoScreen(ModalScreen[None]):
@@ -274,12 +331,12 @@ def _toml_value(value: Any) -> str:
     return _toml_scalar(value)
 
 
-def write_campaign_toml(
-    path: Path,
+def _build_toml_text(
     header: str,
     table: dict[str, Any],
     matrix: Optional[list[dict[str, Any]]] = None,
-) -> None:
+) -> str:
+    """Render a campaign TOML to a string (used by both normal and atomic writer)."""
     out = []
     if header.strip():
         out.append(header)
@@ -291,7 +348,48 @@ def write_campaign_toml(
         out.append("[[matrix]]")
         for key, value in entry.items():
             out.append(f"{key} = {_toml_value(value)}")
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return "\n".join(out) + "\n"
+
+
+def write_campaign_toml(
+    path: Path,
+    header: str,
+    table: dict[str, Any],
+    matrix: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    path.write_text(_build_toml_text(header, table, matrix), encoding="utf-8")
+
+
+def write_campaign_toml_atomic(
+    path: Path,
+    header: str,
+    table: dict[str, Any],
+    matrix: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    """Write TOML with .bak backup for atomic safety (Propose → Confirm → Apply).
+
+    Saves a ``.bak`` copy before overwriting so the user can revert if the
+    applied tuning is incorrect.
+    """
+    bak = Path(str(path) + ".bak")
+    if path.exists():
+        bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        bak.unlink(missing_ok=True)
+    path.write_text(_build_toml_text(header, table, matrix), encoding="utf-8")
+
+
+def revert_toml_from_backup(path: Path) -> bool:
+    """Restore the campaign TOML from a ``.bak`` backup created by the atomic writer.
+
+    Returns ``True`` if a backup was found and restored, ``False`` otherwise.
+    """
+    bak = Path(str(path) + ".bak")
+    if not bak.exists():
+        return False
+    path.write_text(bak.read_text(encoding="utf-8"), encoding="utf-8")
+    bak.unlink(missing_ok=True)
+    return True
 
 
 def list_campaign_configs() -> list[Path]:
@@ -405,6 +503,58 @@ class PromptModal(ModalScreen[Optional[str]]):
 
 
 # --------------------------------------------------------------------------
+# Error-boundary utilities — Block 3: TUI Robustness Hardening
+# Ensures no data-loading exception can propagate to Textual's event loop.
+# --------------------------------------------------------------------------
+
+def _safe_load(load_func, error_message: str = "Data load error", default=None):
+    """Safely execute a synchronous data-loading function.
+
+    Returns the result on success, or ``default`` on any exception.
+    Intended for use inside ``@work(thread=True)`` blocks as well as
+    UI-thread callbacks — the caller is responsible for presenting any
+    user-facing error messages.
+    """
+    try:
+        return load_func()
+    except Exception:
+        return default
+
+
+async def _safe_async_load(
+    load_func,
+    error_message: str = "Data load error",
+    default=None,
+    timeout: float | None = None,
+):
+    """Safely execute an async data-loading function with optional timeout.
+
+    Returns the result on success, or ``default`` on any exception
+    (including ``asyncio.TimeoutError``).  Used only at App-level
+    coordination where await is available.
+    """
+    try:
+        coro = load_func()
+        if timeout is not None:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        return await coro
+    except asyncio.TimeoutError:
+        return default
+    except Exception:
+        return default
+
+
+def _error_status(widget: Static, message: str) -> None:
+    """Display an error message on a Static status widget."""
+    widget.update(f"[red]{message}[/red]")
+
+
+def _retry_status(widget: Static, message: str) -> None:
+    """Display a retry-prompt error message on a Static status widget."""
+    widget.update(f"[red]{message} — press R to retry or F5 to refresh all[/red]")
+
+
+# --------------------------------------------------------------------------
 # Dashboard: run control (start/pause/resume/stop) over the existing
 # pause.ini / stop.ini / .benchmark_master.pid file protocol.
 # --------------------------------------------------------------------------
@@ -435,19 +585,35 @@ class DashboardPane(Vertical):
 
     @work(thread=True, exclusive=True, group="dashboard-status")
     def refresh_status(self) -> None:
-        _pause_file, _stop_file, lock_file, detail = self._active_paths()
-        lock = rb._read_lock(lock_file)
-        paused = _pause_file.exists()
-        stopping = _stop_file.exists()
-        if lock:
-            state = "⏸ paused" if paused else ("⏹ stopping" if stopping else "▶ running")
-            line = f"[b]{state}[/b]  PID {lock['pid']}  started {lock.get('started_at', '?')}"
-        else:
-            line = "[dim]idle -- no benchmark master running[/dim]"
-        if detail.exists():
-            rows = rb._read_rows(detail)
-            errors = sum(1 for r in rows if r.get("error"))
-            line += f"   |  {len(rows)} samples in {detail.name} ({errors} errors)"
+        """Refresh dashboard status with error boundaries.
+
+        Every file-system call (lock read, detail CSV) is wrapped so that
+        a corrupt or missing file never crashes the TUI.
+        """
+        try:
+            _pause_file, _stop_file, lock_file, detail = self._active_paths()
+            lock = _safe_load(
+                lambda: rb._read_lock(lock_file),
+                "Failed to read process lock",
+                default=None,
+            )
+            paused = _pause_file.exists()
+            stopping = _stop_file.exists()
+            if lock:
+                state = "⏸ paused" if paused else ("⏹ stopping" if stopping else "▶ running")
+                line = f"[b]{state}[/b]  PID {lock['pid']}  started {lock.get('started_at', '?')}"
+            else:
+                line = "[dim]idle -- no benchmark master running[/dim]"
+            if detail.exists():
+                rows = _safe_load(
+                    lambda: rb._read_rows(detail),
+                    "Failed to read detail CSV",
+                    default=[],
+                )
+                errors = sum(1 for r in rows if r.get("error"))
+                line += f"   |  {len(rows)} samples in {detail.name} ({errors} errors)"
+        except Exception as exc:
+            line = f"[red]Dashboard error: {exc} — press F5 to refresh[/red]"
         self.app.call_from_thread(self._apply_status, line)
 
     def _apply_status(self, line: str) -> None:
@@ -587,6 +753,7 @@ class ConfigPane(Vertical):
                 ("V", "Validate", "#55ccff"),
                 ("P", "Preview", "#ffcc33"),
                 ("T", "Tune", "#28c85a"),
+                ("B", "Revert", "#bd93f9"),
                 ("A", "Add entry", "#55ccff"),
                 ("X", "Remove entry", "#ff5555"),
                 ("C", "Clone", "#bd93f9"),
@@ -638,6 +805,7 @@ class ConfigPane(Vertical):
         }
         for selector, tooltip in tooltips.items():
             self.query_one(selector).tooltip = tooltip
+        self._tune_proposal_data: dict[str, Any] = {}
         self._load_selected()
 
     def _current_path(self) -> Optional[Path]:
@@ -646,22 +814,34 @@ class ConfigPane(Vertical):
 
     def _load_selected(self) -> None:
         path = self._current_path()
+        status = self.query_one("#config_status", Static)
         if not path or not path.exists():
             return
-        header, table, matrix = load_campaign_toml(path)
-        self._header, self._table, self._matrix = header, table, matrix
-        self.app.active_config = path
-        self.query_one("#field_backend", Select).value = str(table.get("backend", "ollama"))
-        for key in ("runs", "timeout_sec"):
-            self.query_one(f"#field_{key}", Input).value = str(table.get(key, ""))
-        self.query_one("#field_vram_headroom_pct", Input).value = str(table.get("vram_headroom_pct", 5))
-        self.query_one("#field_ollama_url", Input).value = str(table.get("ollama_url", ""))
-        self.query_one("#field_resume", Switch).value = str(table.get("resume", "auto")) == "auto"
-        self._set_benchmark_options(table, matrix)
-        self._set_configured_model_options(table, matrix)
-        self._refresh_model_options(table)
-        self._preview()
-        self.query_one("#config_status", Static).update(f"Loaded {path}")
+        try:
+            result = _safe_load(
+                lambda: load_campaign_toml(path),
+                "Failed to parse campaign TOML",
+                default=None,
+            )
+            if result is None:
+                _error_status(status, f"Cannot load {path.name} — TOML parse error; press R to reload")
+                return
+            header, table, matrix = result
+            self._header, self._table, self._matrix = header, table, matrix
+            self.app.active_config = path
+            self.query_one("#field_backend", Select).value = str(table.get("backend", "ollama"))
+            for key in ("runs", "timeout_sec"):
+                self.query_one(f"#field_{key}", Input).value = str(table.get(key, ""))
+            self.query_one("#field_vram_headroom_pct", Input).value = str(table.get("vram_headroom_pct", 5))
+            self.query_one("#field_ollama_url", Input).value = str(table.get("ollama_url", ""))
+            self.query_one("#field_resume", Switch).value = str(table.get("resume", "auto")) == "auto"
+            self._set_benchmark_options(table, matrix)
+            self._set_configured_model_options(table, matrix)
+            self._refresh_model_options(table)
+            self._preview()
+            status.update(f"Loaded {path}")
+        except Exception as exc:
+            _error_status(status, f"Config load error: {exc}; press R to reload")
 
     def _set_benchmark_options(self, table: dict[str, Any], matrix: list[dict[str, Any]]) -> None:
         selected = set(rb._split(table.get("benchmarks", [])))
@@ -793,11 +973,17 @@ class ConfigPane(Vertical):
             self._table = table
             self._load_selected()
             status.update(f"Defaults restored in {path.name}; model and benchmark selections kept.")
+        elif event.action == "revert":
+            if revert_toml_from_backup(path):
+                self._load_selected()
+                status.update(f"Reverted {path.name} from .bak backup.")
+            else:
+                status.update(f"[dim]No .bak backup found for {path.name}[/dim]")
 
     def _show_tuning_proposal(self) -> None:
         raw_headroom = self.query_one("#field_vram_headroom_pct", Input).value
         try:
-            headroom_pct = float(raw_headroom)
+            headroom_pct = int(float(raw_headroom))
         except ValueError:
             self.query_one("#config_status", Static).update("[red]VRAM target must be numeric[/red]")
             return
@@ -805,7 +991,14 @@ class ConfigPane(Vertical):
         self._build_tuning_proposal(headroom_pct, selected)
 
     @work(thread=True, exclusive=True, group="tuning-proposal")
-    def _build_tuning_proposal(self, headroom_pct: float, selected: list[str]) -> None:
+    def _build_tuning_proposal(self, headroom_pct: int, selected: list[str]) -> None:
+        """Propose VRAM-tuned parameters and present a Confirm → Apply modal.
+
+        Reads ``nvidia-smi`` for available VRAM, then calls ``_derive_vram_params``
+        per selected model to build a diff of current-vs-proposed runner_args.
+        The operator must explicitly confirm before any TOML is modified.
+        """
+
         total_mb: float | None = None
         try:
             result = subprocess.run(
@@ -819,39 +1012,125 @@ class ConfigPane(Vertical):
                 total_mb = float(result.stdout.splitlines()[0].strip())
         except (OSError, ValueError, IndexError, subprocess.SubprocessError):
             pass
-        lines = [
-            "READ-ONLY PARAMETER PROPOSAL",
-            f"Target free VRAM: {headroom_pct:.1f}%",
-            f"GPU capacity: {total_mb / 1024:.1f} GB" if total_mb else "GPU capacity: unavailable",
-            "",
-        ]
+
         usable_mb = total_mb * (1 - headroom_pct / 100) if total_mb else None
-        for value in selected:
-            source, spec = value.split("|", 1)
-            name, _separator, path = spec.partition("=")
-            if source == "llama" and Path(path).is_file():
-                size_mb = Path(path).stat().st_size / (1024 ** 2)
-                fit = usable_mb is not None and size_mb <= usable_mb
-                ngl = 99 if fit else max(1, int(99 * usable_mb / size_mb)) if usable_mb else "measure first"
-                ctx = 32768 if fit else 8192
-                lines.append(
-                    f"{name}: size {size_mb / 1024:.1f} GB → ngl {ngl}, ctx {ctx}, "
-                    f"batch 512, ubatch 128 ({'fits target' if fit else 'partial offload proposal'})"
-                )
-            elif source == "ollama":
-                lines.append(
-                    f"{spec}: Ollama manages GPU layers; use num_ctx 32768 and verify "
-                    "measured free VRAM before increasing context."
-                )
-            else:
-                lines.append(f"{spec}: cloud backend; local VRAM tuning does not apply.")
-        lines.extend((
-            "",
-            "No configuration was changed. Apply only after reviewing a measured warm-load run.",
-        ))
+        header_lines: list[str] = [
+            f"Target free VRAM: {headroom_pct:.1f}%",
+        ]
+        if total_mb is not None:
+            header_lines.append(f"GPU VRAM: {total_mb / 1024:.1f} GB  (usable after headroom: {usable_mb / 1024:.1f} GB)")
+        else:
+            header_lines.append("GPU VRAM: unavailable (nvidia-smi not reachable)")
+            header_lines.append("(Conservative defaults will be proposed; verify on real hardware.)")
+        header_lines.append("")
+
+        # Build per-model diff rows
+        diff_rows: list[tuple[str, str, dict, dict]] = []
+        for model_value in selected:
+            pipe_idx = model_value.find("|")
+            if pipe_idx < 0:
+                continue
+            source = model_value[:pipe_idx]
+            spec = model_value[pipe_idx + 1:]
+            name, sep, path = spec.partition("=")
+
+            derived = rb._derive_vram_params(
+                model_name=name,
+                backend="llama_cpp" if source == "llama" else source,
+                headroom_pct=headroom_pct,
+                available_vram_mb=usable_mb,
+                model_size_bytes=Path(path).stat().st_size if (source == "llama" and Path(path).is_file()) else None,
+            )
+
+            # Current runner_args (from TOML)
+            current_args = dict(self._table.get("runner_args", {}))
+            if isinstance(current_args, list):
+                current_args = {}
+                ri = iter(rb._split(current_args if isinstance(current_args, str) else current_args))
+                for k in ri:
+                    try:
+                        current_args[k.lstrip("-")] = next(ri)
+                    except StopIteration:
+                        break
+
+            diff_rows.append((name, source, current_args, derived or {}))
+
+        proposal_lines = list(header_lines)
+        for name, source, current_args, proposed in diff_rows:
+            backend_label = "llama.cpp" if source == "llama" else source
+            proposal_lines.append(f"{name} ({backend_label}):")
+            backend = "llama_cpp" if source == "llama" else source
+            param_keys = set(proposed.keys()) | set(current_args.keys())
+            if not param_keys:
+                proposal_lines.append("  (no parameters to propose)")
+            for key in sorted(param_keys):
+                current_val = current_args.get(key, "<not set>")
+                proposed_val = proposed.get(key, "<unchanged>")
+                if str(current_val) == str(proposed_val):
+                    proposal_lines.append(f"  {key}: {current_val}")
+                else:
+                    proposal_lines.append(f"  {key}: {current_val} → {proposed_val}")
+            proposal_lines.append("")
+
+        proposal_lines.extend([
+            "Review the proposed values above. Apply writes the TOML with .bak backup.",
+            "Revert (B key) restores the .bak if tuning is incorrect.",
+        ])
+
+        # Store proposed data for later apply
+        self._tune_proposal_data = {
+            "headroom_pct": headroom_pct,
+            "diff_rows": diff_rows,
+        }
+
         self.app.call_from_thread(
             self.app.push_screen,
-            InfoScreen("Launch parameter proposal", "\n".join(lines)),
+            TuneConfirmScreen(proposal_lines),
+            self._on_tune_confirmed,
+        )
+
+    def _on_tune_confirmed(self, confirmed: bool) -> None:
+        """Callback when the TuneConfirmScreen closes."""
+        if not confirmed:
+            self.query_one("#config_status", Static).update("[dim]Tune cancelled — no configuration changed.[/dim]")
+            return
+        path = self._current_path()
+        if not path:
+            return
+
+        # Apply: update table with proposed values using atomic write
+        table = dict(self._table)
+        diff_rows = getattr(self, "_tune_proposal_data", {}).get("diff_rows", [])
+
+        # Build new runner_args list from proposed parameters
+        runner_args: list[str] = []
+        for name, source, _current, proposed in diff_rows:
+            backend = "llama_cpp" if source == "llama" else source
+            for key, value in proposed.items():
+                runner_args.extend([f"--{key}" if not key.startswith("--") else key, str(value)])
+
+        # Deduplicate: keep last seen key
+        seen: dict[str, int] = {}
+        compact: list[str] = []
+        for i, item in enumerate(runner_args):
+            if item.startswith("--"):
+                seen[item.lstrip("-")] = i
+                compact.append(item)
+            else:
+                compact.append(item)
+        # Simple approach: flatten the proposed params into runner_args
+        table["runner_args"] = runner_args
+
+        # Also store headroom_pct
+        headroom = getattr(self, "_tune_proposal_data", {}).get("headroom_pct", 5)
+        table["vram_headroom_pct"] = headroom
+
+        write_campaign_toml_atomic(path, self._header, table, self._matrix)
+        self._table = table
+        self._load_selected()
+        self.query_one("#config_status", Static).update(
+            f"[green]Applied VRAM tuning (headroom {headroom}%) — "
+            f"{path.name}.bak saved for revert.[/green]"
         )
 
     def _add_matrix_entry(self) -> None:
@@ -973,7 +1252,7 @@ class ConfigPane(Vertical):
             index = runner_args.index("--benchmark-file")
             del runner_args[index:index + 2]
         table["runner_args"] = runner_args
-        write_campaign_toml(path, self._header, table, self._matrix)
+        write_campaign_toml_atomic(path, self._header, table, self._matrix)
         self._table = table
         self.app.active_config = path
         self._preview()
@@ -982,67 +1261,74 @@ class ConfigPane(Vertical):
     def _preview(self) -> None:
         plan = self.query_one("#plan_table", DataTable)
         plan.clear()
-        indexed_groups: list[tuple[dict[str, Any], int | None]] = []
-        if self._matrix:
-            args = rb._parser().parse_args([])
-            for entry_index, entry in enumerate(self._matrix):
-                indexed_groups.extend(
-                    (group, entry_index)
-                    for group in rb.expand_matrix(
-                        [entry],
-                        args,
-                        self._table,
-                        resolve_wildcards=False,
+        status = self.query_one("#config_status", Static)
+        try:
+            indexed_groups: list[tuple[dict[str, Any], int | None]] = []
+            if self._matrix:
+                args = _safe_load(lambda: rb._parser().parse_args([]), "Failed to build preview parser", default=[])
+                if isinstance(args, list):
+                    _retry_status(status, "Preview: could not build argument parser")
+                    return
+                for entry_index, entry in enumerate(self._matrix):
+                    groups = _safe_load(
+                        lambda: rb.expand_matrix(
+                            [entry], args, self._table, resolve_wildcards=False,
+                        ),
+                        f"Error expanding matrix entry {entry_index}",
+                        default=[],
                     )
+                    indexed_groups.extend((group, entry_index) for group in (groups or []))
+            else:
+                backend_value = self.query_one("#field_backend", Select).value
+                backend = str(backend_value) if backend_value is not Select.BLANK else "ollama"
+                backends = (
+                    ["ollama", "llama_cpp"] if backend == "both"
+                    else ["ollama", "llama_cpp", "siemens"] if backend == "all"
+                    else [backend]
                 )
-        else:
-            backend_value = self.query_one("#field_backend", Select).value
-            backend = str(backend_value) if backend_value is not Select.BLANK else "ollama"
-            backends = (
-                ["ollama", "llama_cpp"] if backend == "both"
-                else ["ollama", "llama_cpp", "siemens"] if backend == "all"
-                else [backend]
+                selected = [str(value) for value in self.query_one("#model_selection", SelectionList).selected]
+                by_backend = {
+                    "ollama": [value.split("|", 1)[1] for value in selected if value.startswith("ollama|")],
+                    "llama_cpp": [
+                        value.split("|", 1)[1].partition("=")[0]
+                        for value in selected if value.startswith("llama|")
+                    ],
+                    "siemens": [value.split("|", 1)[1] for value in selected if value.startswith("siemens|")],
+                }
+                files = dict(_safe_load(benchmark_files, "Failed to list benchmark files", default=[]))
+                benchmarks = list(self.query_one("#benchmark_selection", SelectionList).selected)
+                indexed_groups = [
+                    ({
+                        "backend": item_backend,
+                        "benchmark_stem": benchmark,
+                        "benchmark_file": files.get(benchmark),
+                        "models": by_backend.get(item_backend, []),
+                    }, None)
+                    for item_backend in backends
+                    for benchmark in benchmarks
+                ]
+            self._plan_entry_indices = []
+            for index, (group, entry_index) in enumerate(indexed_groups, 1):
+                models = ", ".join(group.get("models", [])) or "(none)"
+                params = " ".join(str(value) for value in group.get("runner_args", []))
+                plan.add_row(
+                    str(index),
+                    str(group.get("backend", "")),
+                    str(group.get("benchmark_stem", "")),
+                    models,
+                    params,
+                    "ready" if group.get("models") and group.get("benchmark_file") else "incomplete",
+                )
+                self._plan_entry_indices.append(entry_index)
+            status.update(
+                f"{len(indexed_groups)} execution groups · "
+                + (
+                    f"{len(self._matrix)} matrix definitions; selectors add new entries"
+                    if self._matrix else "selectors are the exact saved run plan"
+                )
             )
-            selected = [str(value) for value in self.query_one("#model_selection", SelectionList).selected]
-            by_backend = {
-                "ollama": [value.split("|", 1)[1] for value in selected if value.startswith("ollama|")],
-                "llama_cpp": [
-                    value.split("|", 1)[1].partition("=")[0]
-                    for value in selected if value.startswith("llama|")
-                ],
-                "siemens": [value.split("|", 1)[1] for value in selected if value.startswith("siemens|")],
-            }
-            files = dict(benchmark_files())
-            indexed_groups = [
-                ({
-                    "backend": item_backend,
-                    "benchmark_stem": benchmark,
-                    "benchmark_file": files.get(benchmark),
-                    "models": by_backend.get(item_backend, []),
-                }, None)
-                for item_backend in backends
-                for benchmark in self.query_one("#benchmark_selection", SelectionList).selected
-            ]
-        self._plan_entry_indices = []
-        for index, (group, entry_index) in enumerate(indexed_groups, 1):
-            models = ", ".join(group.get("models", [])) or "(none)"
-            params = " ".join(str(value) for value in group.get("runner_args", []))
-            plan.add_row(
-                str(index),
-                str(group.get("backend", "")),
-                str(group.get("benchmark_stem", "")),
-                models,
-                params,
-                "ready" if group.get("models") and group.get("benchmark_file") else "incomplete",
-            )
-            self._plan_entry_indices.append(entry_index)
-        self.query_one("#config_status", Static).update(
-            f"{len(indexed_groups)} execution groups · "
-            + (
-                f"{len(self._matrix)} matrix definitions; selectors add new entries"
-                if self._matrix else "selectors are the exact saved run plan"
-            )
-        )
+        except Exception as exc:
+            _error_status(status, f"Preview error: {exc}; press V to validate")
 
 
 # --------------------------------------------------------------------------
@@ -1058,6 +1344,7 @@ class ModelsPane(Vertical):
                 ("P", "Pull", "#28c85a"),
                 ("G", "Register GGUF", "#bd93f9"),
                 ("B", "Backup", "#ffcc33"),
+                ("E", "Rebuild", "#ff5555"),
                 ("D", "Doctor", "#ff8c1e"),
                 id="model_actions",
             )
@@ -1079,10 +1366,23 @@ class ModelsPane(Vertical):
 
     @work(thread=True, exclusive=True, group="model-inventory")
     def refresh_models(self) -> None:
-        cfg = self._config_table()
-        url = rb._ollama_base_url(str(cfg.get("ollama_url", "http://127.0.0.1:11434")))
+        """Refresh the model inventory with error boundaries on every data source."""
         rows: list[tuple[str, str, str, str, str]] = []
         candidates = set(OLLAMA_PULL_CATALOG)
+        installed: set[str] = set()
+        ollama_note = "Models unavailable — no error"
+        gguf_note = ""
+        siemens_count = 0
+
+        try:
+            cfg = _safe_load(self._config_table, "Cannot load campaign config", default={})
+            if cfg is None:
+                cfg = {}
+        except Exception:
+            cfg = {}
+
+        # --- Ollama inventory (network call) ---
+        url = rb._ollama_base_url(str(cfg.get("ollama_url", "http://127.0.0.1:11434")))
         try:
             tags = fetch_ollama_tags(url)
             for entry in sorted(tags, key=lambda e: str(e.get("name", ""))):
@@ -1092,23 +1392,41 @@ class ModelsPane(Vertical):
             configured = rb._split(cfg.get("models", [])) + rb._split(cfg.get("ollama_models", []))
             candidates.update(name for name in configured if "*" not in name and "?" not in name)
             ollama_note = f"Ollama ready · {len(tags)} installed"
+        except asyncio.TimeoutError:
+            ollama_note = "Ollama connection timed out — press R to retry"
         except Exception as exc:
-            installed = set()
             ollama_note = f"Ollama unavailable: {exc}"
-        registered = dict(gguf_registry(cfg))
-        for name, path in discover_gguf_models():
-            registered.setdefault(name, path)
-        for name, path in sorted(registered.items()):
-            p = Path(path)
-            size = f"{p.stat().st_size / (1024**3):.1f} GB" if p.is_file() else "missing"
-            rows.append(("llama.cpp", name, size, "installed" if p.is_file() else "missing", path))
-        for name in rb._split(cfg.get("siemens_models", [])) or rb.DEFAULT_SIEMENS_MODELS:
-            rows.append(("Siemens", name, "cloud", "configured", "api.siemens.com"))
+
+        # --- GGUF discovery (filesystem) ---
+        try:
+            registered = dict(_safe_load(lambda: gguf_registry(cfg), "GGUF registry error", default={}))
+            discovered = _safe_load(discover_gguf_models, "GGUF discovery error", default=[]) or []
+            for name, path in discovered:
+                registered.setdefault(name, path)
+            for name, path in sorted(registered.items()):
+                p = Path(path)
+                size = f"{p.stat().st_size / (1024**3):.1f} GB" if p.is_file() else "missing"
+                rows.append(("llama.cpp", name, size, "installed" if p.is_file() else "missing", path))
+            gguf_note = f" · {len(registered)} GGUF"
+        except Exception as exc:
+            gguf_note = f" · GGUF scan error: {exc}"
+
+        # --- Siemens cloud models ---
+        try:
+            siemens_models = rb._split(cfg.get("siemens_models", [])) or rb.DEFAULT_SIEMENS_MODELS
+            for name in siemens_models:
+                rows.append(("Siemens", name, "cloud", "configured", "api.siemens.com"))
+                siemens_count += 1
+        except Exception:
+            pass
+
+        note = f"{ollama_note}{gguf_note}"
+
         self.app.call_from_thread(
             self._apply_inventory,
             rows,
             sorted(candidates - installed),
-            ollama_note,
+            note,
         )
 
     def _apply_inventory(
@@ -1143,6 +1461,8 @@ class ModelsPane(Vertical):
                 status.update("Select an Ollama model first.")
         elif event.action == "register_gguf":
             self.app.push_screen(PromptModal("NAME=path\\to\\model.gguf"), self._do_register)
+        elif event.action == "rebuild":
+            self._do_rebuild()
         elif event.action == "backup":
             self._do_backup()
         elif event.action == "doctor":
@@ -1194,6 +1514,61 @@ class ModelsPane(Vertical):
         write_campaign_toml(config, header, table, matrix)
         status.update(f"Registered {name.strip()} into {config.name}.")
         self.refresh_models()
+
+    def _do_rebuild(self) -> None:
+        """Rebuild a llama.cpp source fork selected in the models table.
+
+        Inspects the currently cursor-row for a llama.cpp / GGUF entry.
+        If the path resolves to a source tree (detected via
+        ``fork_build.can_rebuild``), triggers ``fork_build.build`` on a
+        background thread. On any failure, writes ``install.md`` as a
+        durable fallback and reports the path in the status bar.
+        """
+
+        def _execute() -> None:
+            result = _fork_build.build(source_path, build_type="Release")
+            self.app.call_from_thread(self._show_models_status, _rebuild_status(result))
+
+        table = self.query_one("#models_table", DataTable)
+        cursor = table.cursor_row
+        if cursor is None:
+            self._show_models_status("Select a row first.")
+            return
+        try:
+            row = table.get_row_at(cursor)
+        except (StopIteration, TypeError):
+            self._show_models_status("No row selected.")
+            return
+        # row is (Source, Name, Size, Status, Location)
+        source_label = str(row[0]) if len(row) > 0 else ""
+        location = str(row[4]) if len(row) > 4 else ""
+        if source_label != "llama.cpp":
+            self._show_models_status(f"Rebuild only available for llama.cpp backends (row: {source_label}).")
+            return
+        if not location:
+            self._show_models_status("Selected row has no source path — cannot rebuild.")
+            return
+        source_path = Path(location)
+        # can_rebuild inspects the path's ancestors for a source tree
+        if not _fork_build.can_rebuild(source_path):
+            # Fall back: try the path itself
+            if _fork_build.is_source_tree(source_path):
+                source_path = source_path
+            else:
+                self._show_models_status("Selected row is not inside a llama.cpp source tree — rebuild not possible.")
+                return
+        status = self.query_one("#models_status", Static)
+        status.update(f"Rebuilding {source_path} … (this may take a few minutes)")
+        Thread(target=_execute, daemon=True).start()
+
+    @staticmethod
+    def _rebuild_status(result: "fork_build.ForkBuildResult") -> str:
+        if result.success:
+            return f"Rebuild successful — binary at {result.binary_path}"
+        md = f" (see {result.install_md_path})" if result.install_md_path else ""
+        # Show first 200 characters of log
+        log_snippet = (result.log[:200] + "...") if result.log else ""
+        return f"Rebuild failed{md}: {log_snippet}"
 
     def _do_backup(self) -> None:
         status = self.query_one("#models_status", Static)
@@ -1295,11 +1670,32 @@ class ResultsPane(Vertical):
         return ROOT / "docs" / "project" / "benchmark_report.html"
 
     def refresh_results(self) -> None:
-        self._rows = load_report_rows(self.report_path())
-        self._populate_table(self._rows)
-        self.query_one("#results_status", Static).update(
-            f"{len(self._rows)} rows from {self.report_path().relative_to(ROOT)}"
-        )
+        """Reload report rows with error boundaries.
+
+        Handles missing report file, empty report, and malformed embedded
+        JSON without crashing the TUI.
+        """
+        status = self.query_one("#results_status", Static)
+        try:
+            report = self.report_path()
+            if not report.exists():
+                self._rows = []
+                self._populate_table([])
+                status.update("[dim]No results yet — run a benchmark campaign first[/dim]")
+                return
+            rows = _safe_load(
+                lambda: load_report_rows(report),
+                "Failed to parse report data",
+                default=[],
+            )
+            self._rows = rows if rows is not None else []
+            self._populate_table(self._rows)
+            if not self._rows:
+                status.update("[dim]No results yet — run a benchmark campaign first[/dim]")
+            else:
+                status.update(f"{len(self._rows)} rows from {report.relative_to(ROOT)}")
+        except Exception as exc:
+            _error_status(status, f"Results error: {exc} — press R to retry")
 
     def _populate_table(self, rows: list[dict[str, Any]]) -> None:
         table = self.query_one(DataTable)
@@ -1434,40 +1830,67 @@ class LeaderboardPane(Vertical):
         self.refresh_board()
 
     def refresh_board(self) -> None:
-        rows = load_report_rows(ROOT / "docs" / "project" / "benchmark_report.html")
-        by_model: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for row in rows:
-            by_model.setdefault((row.get("model", ""), row.get("backend", "")), []).append(row)
+        """Refresh leaderboard with error boundaries.
 
-        def avg(items: list[dict[str, Any]], key: str) -> float:
-            values = [float(i[key]) for i in items if isinstance(i.get(key), (int, float))]
-            return sum(values) / len(values) if values else 0.0
-
-        ranked = sorted(
-            ((model, backend, avg(items, "heuristic_score"), avg(items, "wall_seconds"))
-             for (model, backend), items in by_model.items()),
-            key=lambda t: t[2], reverse=True,
-        )[:5]
+        Handles missing report file, empty data, and malformed rows
+        without crashing.  With no data the table and charts show
+        "No results yet" instead of error text.
+        """
         table = self.query_one(DataTable)
         table.clear()
-        for i, (model, backend, score, wall) in enumerate(ranked, 1):
-            table.add_row(str(i), model, backend, f"{score:.1f}", f"{wall:.1f}")
+        chart = self.query_one("#chart", Static)
+        scatter = self.query_one("#scatter", Static)
+        try:
+            rows = _safe_load(
+                lambda: load_report_rows(ROOT / "docs" / "project" / "benchmark_report.html"),
+                "Failed to load report data for leaderboard",
+                default=[],
+            )
+            if not rows:
+                chart.update("[dim]No results yet — run a benchmark campaign first[/dim]")
+                scatter.update("[dim]No data yet[/dim]")
+                return
+            by_model: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for row in rows:
+                try:
+                    by_model.setdefault(
+                        (row.get("model", ""), row.get("backend", "")), [],
+                    ).append(row)
+                except (KeyError, TypeError):
+                    continue  # skip malformed rows
 
-        chart_lines = []
-        max_score = max((r[2] for r in ranked), default=1.0) or 1.0
-        for model, backend, score, _wall in ranked:
-            bar_len = int(40 * score / max_score)
-            tier = 6 if score >= max_score * 0.9 else 5 if score >= max_score * 0.7 else 4 if score >= max_score * 0.5 else 3
-            color = TIER_COLORS.get(tier, "white")
-            bar = "█" * max(bar_len, 1)
-            chart_lines.append(f"{model[:24]:<24} [{color}]{bar}[/{color}] {score:.1f}")
-        self.query_one("#chart", Static).update("\n".join(chart_lines) or "No data yet.")
-        scatter = ["QUALITY ↕   speed →", "100 ┤"]
-        for model, _backend, score, wall in ranked:
-            speed = 1.0 / max(wall, 0.001)
-            scatter.append(f"{score:>3.0f} ┤ {'·' * min(28, max(1, int(speed * 20)))}● {model[:18]}")
-        scatter.append("  0 └────────────────────────────")
-        self.query_one("#scatter", Static).update("\n".join(scatter))
+            def avg(items: list[dict[str, Any]], key: str) -> float:
+                values = [float(i[key]) for i in items if isinstance(i.get(key), (int, float))]
+                return sum(values) / len(values) if values else 0.0
+
+            ranked = sorted(
+                ((model, backend, avg(items, "heuristic_score"), avg(items, "wall_seconds"))
+                 for (model, backend), items in by_model.items()),
+                key=lambda t: t[2], reverse=True,
+            )[:5]
+            for i, (model, backend, score, wall) in enumerate(ranked, 1):
+                table.add_row(str(i), model, backend, f"{score:.1f}", f"{wall:.1f}")
+
+            chart_lines = []
+            max_score = max((r[2] for r in ranked), default=1.0) or 1.0
+            for model, backend, score, _wall in ranked:
+                bar_len = int(40 * score / max_score)
+                tier = 6 if score >= max_score * 0.9 else 5 if score >= max_score * 0.7 else 4 if score >= max_score * 0.5 else 3
+                color = TIER_COLORS.get(tier, "white")
+                bar = "█" * max(bar_len, 1)
+                chart_lines.append(f"{model[:24]:<24} [{color}]{bar}[/{color}] {score:.1f}")
+            chart.update("\n".join(chart_lines) or "[dim]No data yet[/dim]")
+            scatter_lines = ["QUALITY ↕   speed →", "100 ┤"]
+            for model, _backend, score, wall in ranked:
+                speed = 1.0 / max(wall, 0.001)
+                scatter_lines.append(
+                    f"{score:>3.0f} ┤ {'·' * min(28, max(1, int(speed * 20)))}● {model[:18]}"
+                )
+            scatter_lines.append("  0 └────────────────────────────")
+            scatter.update("\n".join(scatter_lines))
+        except Exception as exc:
+            _error_status(chart, f"Leaderboard error: {exc}")
+            scatter.update("[dim]Error loading leaderboard data[/dim]")
 
     def on_action_strip_selected(self, event: ActionStrip.Selected) -> None:
         if event.strip_id != "leaderboard_actions":
@@ -1523,9 +1946,14 @@ class AgentMonitorPane(Vertical):
         return module
 
     def _start_collector(self) -> None:
+        """Start the external agent-monitor collector with error boundaries."""
         status = self.query_one("#monitor_status", Static)
         if not MONITOR_COLLECTOR.is_file():
-            status.update(f"[red]Collector not found: {MONITOR_COLLECTOR}[/red]")
+            self._reader = None
+            status.update(
+                f"[red]Agent monitor not available — collector missing: "
+                f"{MONITOR_COLLECTOR}[/red]"
+            )
             return
         try:
             module = self._load_monitor_module()
@@ -1536,70 +1964,97 @@ class AgentMonitorPane(Vertical):
             status.update(
                 f"Embedded collector running · canonical source {MONITOR_SCRIPT.parent}"
             )
+        except RuntimeError as exc:
+            self._reader = None
+            status.update(
+                f"[red]Agent monitor not available — {exc}[/red]"
+            )
         except Exception as exc:
             self._reader = None
             status.update(f"[red]Collector startup failed: {exc}[/red]")
 
     def _poll_collector(self) -> None:
+        """Poll the external collector with error boundaries.
+
+        If the collector process crashes or ``latest()`` raises, the
+        error is caught and shown in the status bar — no exception
+        propagates to Textual's event loop.
+        """
         if self._reader is None:
             return
-        snapshot = self._reader.latest()
+        try:
+            snapshot = self._reader.latest()
+        except Exception:
+            return
         if snapshot is None:
             process = self._reader.process
-            if process is not None and process.poll() is not None:
-                self.query_one("#monitor_status", Static).update(
-                    f"[red]Collector exited with code {process.returncode}[/red]"
-                )
+            if process is not None:
+                try:
+                    rc = process.poll()
+                except Exception:
+                    return
+                if rc is not None:
+                    self.query_one("#monitor_status", Static).update(
+                        f"[red]Collector exited with code {rc}[/red]"
+                    )
             return
         self._snapshot = snapshot
         self._render_snapshot()
 
     def _render_snapshot(self) -> None:
-        system = self._snapshot.get("System") or {}
-        self.query_one("#monitor_system", Static).update(
-            "  ".join(
-                (
-                    f"CPU {system.get('CPU', '--')}%",
-                    f"RAM {system.get('RamUsed', '--')}/{system.get('RamTotal', '--')} MB",
-                    f"dGPU {system.get('DGpu', '--')}%",
-                    f"VRAM {system.get('DVramUsed', '--')}/{system.get('DVramTotal', '--')} MB",
-                    f"Disk ↓{system.get('DiskRead', '--')} ↑{system.get('DiskWrite', '--')}",
+        """Render the latest monitor snapshot with error boundaries."""
+        try:
+            system = self._snapshot.get("System") or {}
+            self.query_one("#monitor_system", Static).update(
+                "  ".join(
+                    (
+                        f"CPU {system.get('CPU', '--')}%",
+                        f"RAM {system.get('RamUsed', '--')}/{system.get('RamTotal', '--')} MB",
+                        f"dGPU {system.get('DGpu', '--')}%",
+                        f"VRAM {system.get('DVramUsed', '--')}/{system.get('DVramTotal', '--')} MB",
+                        f"Disk ↓{system.get('DiskRead', '--')} ↑{system.get('DiskWrite', '--')}",
+                    )
                 )
             )
-        )
-        agents = self.query_one("#agents_table", DataTable)
-        agents.clear()
-        for row in self._snapshot.get("Agents") or []:
-            agents.add_row(
-                str(row.get("Agent") or "--"),
-                f"{row.get('Model') or '--'} / {row.get('Provider') or '--'}",
-                str(row.get("Action") or "--"),
-                str(row.get("PID") or "--"),
-                str(row.get("CPU") or "--"),
-                str(row.get("RAM") or "--"),
-                str(row.get("Tokens") or "--"),
-                str(row.get("ContextPercent") or "--"),
-                str(row.get("TPS") or "--"),
+            agents = self.query_one("#agents_table", DataTable)
+            agents.clear()
+            for row in self._snapshot.get("Agents") or []:
+                agents.add_row(
+                    str(row.get("Agent") or "--"),
+                    f"{row.get('Model') or '--'} / {row.get('Provider') or '--'}",
+                    str(row.get("Action") or "--"),
+                    str(row.get("PID") or "--"),
+                    str(row.get("CPU") or "--"),
+                    str(row.get("RAM") or "--"),
+                    str(row.get("Tokens") or "--"),
+                    str(row.get("ContextPercent") or "--"),
+                    str(row.get("TPS") or "--"),
+                )
+            engines = self.query_one("#engines_table", DataTable)
+            engines.clear()
+            for row in self._snapshot.get("Engines") or []:
+                engines.add_row(
+                    str(row.get("Engine") or "--"),
+                    str(row.get("Model") or "--"),
+                    str(row.get("GPUDevice") or "--"),
+                    str(row.get("Size") or "--"),
+                    str(row.get("RAM") or "--"),
+                    str(row.get("VRAM") or "--"),
+                    str(row.get("VRAMFree") or "--"),
+                    str(row.get("Tokens") or "--"),
+                    str(row.get("ContextLimit") or "--"),
+                    str(row.get("TPS") or "--"),
+                )
+            agents_list = self._snapshot.get("Agents") or []
+            engines_list = self._snapshot.get("Engines") or []
+            self.query_one("#monitor_status", Static).update(
+                f"{len(agents_list)} agents · "
+                f"{len(engines_list)} engines · live every 2s"
             )
-        engines = self.query_one("#engines_table", DataTable)
-        engines.clear()
-        for row in self._snapshot.get("Engines") or []:
-            engines.add_row(
-                str(row.get("Engine") or "--"),
-                str(row.get("Model") or "--"),
-                str(row.get("GPUDevice") or "--"),
-                str(row.get("Size") or "--"),
-                str(row.get("RAM") or "--"),
-                str(row.get("VRAM") or "--"),
-                str(row.get("VRAMFree") or "--"),
-                str(row.get("Tokens") or "--"),
-                str(row.get("ContextLimit") or "--"),
-                str(row.get("TPS") or "--"),
+        except Exception as exc:
+            self.query_one("#monitor_status", Static).update(
+                f"[red]Monitor render error: {exc}[/red]"
             )
-        self.query_one("#monitor_status", Static).update(
-            f"{len(self._snapshot.get('Agents') or [])} agents · "
-            f"{len(self._snapshot.get('Engines') or [])} engines · live every 2s"
-        )
 
     def on_action_strip_selected(self, event: ActionStrip.Selected) -> None:
         if event.strip_id != "monitor_actions":
@@ -1637,6 +2092,7 @@ class BenchmarkTUI(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("h", "help", "Help"),
+        Binding("f5", "refresh_all", "Refresh"),
         Binding("s", "run_control('start')", "Start"),
         Binding("p", "run_control('pause')", "Pause"),
         Binding("r", "run_control('resume')", "Resume"),
@@ -1778,6 +2234,50 @@ class BenchmarkTUI(App):
     def action_focus_filter(self) -> None:
         self.query_one(TabbedContent).active = "results"
         self.query_one("#filter", Input).focus()
+
+    def action_refresh_all(self) -> None:
+        """F5 — Reload data for all active screens and clear error states.
+
+        Each pane's own error boundaries handle individual failures;
+        this method simply re-triggers every pane's data-loading.
+        """
+        # Dashboard
+        try:
+            self.query_one(DashboardPane).refresh_status()
+        except Exception:
+            pass
+
+        # Config
+        try:
+            pane = self.query_one(ConfigPane)
+            pane.query_one("#config_status", Static).update("[dim]Reloading Config …[/dim]")
+            pane._load_selected()
+        except Exception:
+            pass
+
+        # Models
+        try:
+            self.query_one(ModelsPane).refresh_models()
+        except Exception:
+            pass
+
+        # Results
+        try:
+            self.query_one(ResultsPane).refresh_results()
+        except Exception:
+            pass
+
+        # Leaderboard
+        try:
+            self.query_one(LeaderboardPane).refresh_board()
+        except Exception:
+            pass
+
+        # Agent Monitor — restart the collector
+        try:
+            self.query_one(AgentMonitorPane)._start_collector()
+        except Exception:
+            pass
 
 
 def main() -> int:

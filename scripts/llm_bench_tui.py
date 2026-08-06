@@ -33,6 +33,7 @@ from threading import Thread
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+import webbrowser as _webbrowser
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -62,6 +63,21 @@ from textual.widgets import (  # noqa: E402
     TabPane,
 )
 from textual.reactive import reactive  # noqa: E402
+
+
+def _open_file(path: str) -> None:
+    """Cross-platform file/URL opener (Linux, macOS, Windows)."""
+    p = Path(path)
+    if p.is_file():
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(p)])
+        elif sys.platform == "win32":
+            os.startfile(str(p))
+        else:
+            subprocess.Popen(["xdg-open", str(p)])
+    else:
+        _webbrowser.open(path)
+
 
 ROOT = rb.ROOT
 CONFIG_DIR = ROOT / "config"
@@ -1002,7 +1018,7 @@ class DashboardPane(Vertical):
                 stderr=subprocess.DEVNULL,
                 creationflags=flags,
             )
-        os.startfile(url)
+        _open_file(url)
 
     def _read_child_output(self) -> None:
         process = self._proc
@@ -2074,7 +2090,7 @@ class ResultsPane(Vertical):
             self._populate_table(self._rows)
             self.query_one("#results_status", Static).update("Grouping cleared")
         elif event.action == "web_report":
-            os.startfile(str(self.report_path()))  # noqa: S606 -- local file, user-triggered
+            _open_file(str(self.report_path()))  # noqa: S606 -- local file, user-triggered
         elif event.action == "excel":
             out = ROOT / "benchmark_results" / "benchmark_report_export.csv"
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -2083,7 +2099,7 @@ class ResultsPane(Vertical):
                 writer.writeheader()
                 for row in self._rows:
                     writer.writerow({key: row.get(key, "") for key, _ in COLUMNS})
-            os.startfile(str(out))  # noqa: S606
+            _open_file(str(out))  # noqa: S606
 
     def _apply_grouping(self, value: Optional[str]) -> None:
         if value is None:
@@ -2198,7 +2214,7 @@ class LeaderboardPane(Vertical):
         if event.action == "refresh":
             self.refresh_board()
         elif event.action == "web_report":
-            os.startfile(str(ROOT / "docs" / "project" / "benchmark_report.html"))
+            _open_file(str(ROOT / "docs" / "project" / "benchmark_report.html"))
 
 
 class AgentMonitorPane(Vertical):

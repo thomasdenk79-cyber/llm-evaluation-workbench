@@ -65,6 +65,98 @@ DEFAULT_COMPRESSION = "none"
 MAX_BODY = 1_000_000  # 1 MB — reject any POST with a larger declared body
 DEFAULT_BIND = "127.0.0.1"
 DEFAULT_PORT = 8766
+SERVER_SETTINGS_PATH = ROOT / "config" / "server_settings.json"
+
+HELP_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Help — LLM Evaluation Workbench</title>
+<style>
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0e1013;color:#d5d9dd;margin:0;padding:2rem}
+h1{color:#55ccff}h2{color:#55ccff;margin-top:2rem}
+code{background:#182128;padding:0.125rem 0.375rem;border-radius:3px}
+table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{text-align:left;padding:0.5rem;border-bottom:1px solid #303840}
+th{color:#d8f3ff}
+a{color:#55ccff}
+</style>
+</head>
+<body>
+<h1>LLM Evaluation Workbench — Help</h1>
+<h2>CLI Commands</h2>
+<table>
+<tr><th>Command</th><th>Description</th></tr>
+<tr><td><code>python run_benchmark.py</code></td><td>Start the TUI control center</td></tr>
+<tr><td><code>python run_benchmark.py --help</code></td><td>Show CLI usage and options</td></tr>
+<tr><td><code>python run_benchmark.py --config CONFIG</code></td><td>Run with a specific campaign TOML</td></tr>
+<tr><td><code>python run_benchmark.py --validate-config</code></td><td>Validate config, print errors</td></tr>
+<tr><td><code>python bench_web_server.py --port PORT --host HOST</code></td><td>Start the web server</td></tr>
+</table>
+<h2>API Endpoints</h2>
+<table>
+<tr><th>Method</th><th>Path</th><th>Description</th></tr>
+<tr><td>GET</td><td><code>/</code></td><td>Main benchmark report (Tabulator grid)</td></tr>
+<tr><td>GET</td><td><code>/api/data</code></td><td>JSON report data rows</td></tr>
+<tr><td>GET</td><td><code>/api/status</code></td><td>Run control status (running/paused/stopped)</td></tr>
+<tr><td>GET</td><td><code>/api/health</code></td><td>Health check endpoint</td></tr>
+<tr><td>GET</td><td><code>/api/settings</code></td><td>Get server settings (host, port, compression)</td></tr>
+<tr><td>POST</td><td><code>/api/settings</code></td><td>Update server settings</td></tr>
+<tr><td>POST</td><td><code>/api/control/pause</code></td><td>Pause active benchmark</td></tr>
+<tr><td>POST</td><td><code>/api/control/resume</code></td><td>Resume paused benchmark</td></tr>
+<tr><td>POST</td><td><code>/api/control/stop</code></td><td>Stop active benchmark</td></tr>
+<tr><td>GET</td><td><code>/vendor/&lt;file&gt;</code></td><td>Tabulator JS/CSS vendor files</td></tr>
+</table>
+<h2>TUI Keyboard Shortcuts</h2>
+<table>
+<tr><th>Key</th><th>Action</th></tr>
+<tr><td><code>1-6</code></td><td>Switch to tab (Dashboard/Config/Models/Results/Leaderboard/Monitor)</td></tr>
+<tr><td><code>/</code></td><td>Focus filter input</td></tr>
+<tr><td><code>q</code></td><td>Quit</td></tr>
+<tr><td><code>d</code></td><td>Cycle density mode</td></tr>
+<tr><td><code>h</code></td><td>Help screen</td></tr>
+<tr><td><code>l</code></td><td>Layout configuration</td></tr>
+<tr><td><code>s</code></td><td>Start benchmark</td></tr>
+<tr><td><code>p</code></td><td>Pause benchmark</td></tr>
+<tr><td><code>r</code></td><td>Resume benchmark</td></tr>
+<tr><td><code>x</code></td><td>Stop benchmark</td></tr>
+<tr><td><code>F5</code></td><td>Refresh all panels</td></tr>
+</table>
+<h2>Density Modes</h2>
+<p>Density modes adjust padding, heights, and panel sizes:
+<strong>Wide</strong> (spacious), <strong>Normal</strong> (default),
+<strong>Compact</strong>, <strong>Mini</strong>, <strong>Ultra Compact</strong> (minimal).</p>
+<p>Press <code>d</code> to cycle, or <code>l</code> to open the layout panel.</p>
+<h2>VRAM Guard</h2>
+<p>The VRAM headroom guard reserves a percentage of GPU memory for non-benchmark workloads.</p>
+<table>
+<tr><th>Parameter</th><th>Default</th><th>Range</th><th>Description</th></tr>
+<tr><td><code>vram_headroom_pct</code></td><td>75</td><td>1-80</td><td>Percent of GPU memory to keep free</td></tr>
+</table>
+</body>
+</html>
+""".lstrip()
+
+
+def _load_server_settings() -> dict:
+    if SERVER_SETTINGS_PATH.is_file():
+        try:
+            return json.loads(SERVER_SETTINGS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {
+        "host": DEFAULT_BIND,
+        "port": DEFAULT_PORT,
+        "compression": DEFAULT_COMPRESSION,
+    }
+
+
+def _save_server_settings(settings: dict) -> None:
+    SERVER_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SERVER_SETTINGS_PATH.write_text(
+        json.dumps(settings, indent=2), encoding="utf-8"
+    )
 
 
 def extract_report_rows() -> list[dict]:
@@ -129,6 +221,14 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_bytes(self, status_code: int, body: bytes, content_type: str) -> None:
+        """Send raw bytes with a given content type."""
+        self.send_response(status_code)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -236,6 +336,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_no_report_page()
                 return
             self._send_file(REPORT_HTML, "text/html; charset=utf-8")
+        elif path == "/help":
+            self._send_bytes(200, HELP_HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/api/settings":
+            self._send_json_response(200, _load_server_settings())
         elif path == "/api/data":
             self._send_json(extract_report_rows())
         elif path == "/api/status":
@@ -263,6 +367,21 @@ class Handler(BaseHTTPRequestHandler):
         if content_length > MAX_BODY:
             self._send_json_response(413, {"error": "Request too large"})
             return
+
+        if parsed.path == "/api/settings":
+            body = self.rfile.read(content_length)
+            try:
+                settings = json.loads(body)
+                current = _load_server_settings()
+                for key in ("host", "port", "compression"):
+                    if key in settings:
+                        current[key] = settings[key]
+                _save_server_settings(current)
+                self._send_json_response(200, current)
+                return
+            except json.JSONDecodeError:
+                self._send_json_response(400, {"error": "Invalid JSON"})
+                return
 
         match = re.match(r"^/api/control/(pause|resume|stop)$", parsed.path)
         if match:
@@ -298,8 +417,8 @@ def main(argv: list[str] | None = None) -> int:
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Serving benchmark report + control plane on http://{args.host}:{args.port}/  "
           f"(default compression: {args.compression})")
-    print("Routes: GET / , GET /api/data , GET /api/status , "
-          "POST /api/control/{pause,resume,stop}")
+    print("Routes: GET / , GET /api/data , GET /api/status , GET /help , "
+          "GET/POST /api/settings, POST /api/control/{pause,resume,stop}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

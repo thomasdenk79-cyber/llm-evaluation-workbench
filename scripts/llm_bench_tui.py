@@ -61,6 +61,7 @@ from textual.widgets import (  # noqa: E402
     TabbedContent,
     TabPane,
 )
+from textual.reactive import reactive  # noqa: E402
 
 ROOT = rb.ROOT
 CONFIG_DIR = ROOT / "config"
@@ -99,6 +100,110 @@ DEFAULT_KNOBS: dict[str, Any] = {
     "resume": "auto",
     "run": "resume",
     "ollama_url": "http://127.0.0.1:11434/api/generate",
+}
+
+DENSITY_MODES = [
+    ("Wide", "wide"),
+    ("Normal", "normal"),
+    ("Compact", "compact"),
+    ("Mini", "mini"),
+    ("Ultra Compact", "ultra-compact"),
+]
+
+DENSITY_DEFAULT = "normal"
+
+DENSITY_CSS = {
+    "wide": """
+    .toolbar { height: 3; padding: 0 2; }
+    #dashboard_actions, #leaderboard_actions { height: 1; margin: 0 2; }
+    .panel_title { height: 1; padding: 0 2; }
+    #status_line { height: 2; padding: 0 2; }
+    DataTable > .datatable--header { padding: 0 1; }
+    #settings_panel { width: 40; padding: 0 2; }
+    #settings_panel Label { height: 1; }
+    #settings_panel Input, #settings_panel Select { height: 3; }
+    .switch_row { height: 3; }
+    #campaign_builder { height: 22; padding: 1 2; }
+    #config_status, #models_status, #results_status, #monitor_status { height: 2; padding: 0 2; }
+    .monitor_pane { padding: 0; }
+    #board_table { height: 12; }
+    #leaderboard_charts { height: 1fr; min-height: 10; }
+    #chart, #scatter { padding: 1 2; }
+    #run_log { height: 1fr; padding: 0 1; }
+    """,
+    "normal": """
+    .toolbar { height: 3; padding: 0 1; }
+    #dashboard_actions, #leaderboard_actions { height: 1; margin: 0 1; }
+    .panel_title { height: 1; }
+    #status_line { height: 2; padding: 0 1; }
+    DataTable > .datatable--header { padding: 0 1; }
+    #settings_panel { width: 34; padding: 0 1; }
+    #settings_panel Label { height: 1; }
+    #settings_panel Select { height: 3; }
+    #settings_panel Input { height: 3; }
+    .switch_row { height: 3; }
+    #campaign_builder { height: 20; padding: 1; }
+    #config_status, #models_status, #results_status, #monitor_status { height: 2; padding: 0 1; }
+    .monitor_pane { padding: 0; }
+    #board_table { height: 10; }
+    #leaderboard_charts { height: 1fr; min-height: 8; }
+    #chart, #scatter { padding: 1; }
+    #run_log { height: 1fr; }
+    """,
+    "compact": """
+    .toolbar { height: 2; padding: 0 1; }
+    #dashboard_actions, #leaderboard_actions { height: 1; margin: 0 1; }
+    .panel_title { height: 1; }
+    #status_line { height: 1; padding: 0 1; }
+    DataTable > .datatable--header { padding: 0 1; }
+    #settings_panel { width: 30; padding: 0 1; }
+    #settings_panel Label { height: 1; }
+    #settings_panel Input, #settings_panel Select { height: 2; }
+    .switch_row { height: 2; }
+    #campaign_builder { height: 18; padding: 0 1; }
+    #config_status, #models_status, #results_status, #monitor_status { height: 1; padding: 0 1; }
+    .monitor_pane { padding: 0; }
+    #board_table { height: 8; }
+    #leaderboard_charts { height: 1fr; min-height: 6; }
+    #chart, #scatter { padding: 0; }
+    #run_log { height: 1fr; }
+    """,
+    "mini": """
+    .toolbar { height: 1; padding: 0 1; }
+    #dashboard_actions, #leaderboard_actions { height: 1; margin: 0; }
+    .panel_title { height: 1; }
+    #status_line { height: 1; padding: 0 1; }
+    DataTable > .datatable--header { padding: 0 1; }
+    #settings_panel { width: 26; padding: 0; }
+    #settings_panel Label { height: 1; }
+    #settings_panel Input, #settings_panel Select { height: 2; }
+    .switch_row { height: 2; }
+    #campaign_builder { height: 16; padding: 0; }
+    #config_status, #models_status, #results_status, #monitor_status { height: 1; padding: 0 1; }
+    .monitor_pane { padding: 0; }
+    #board_table { height: 6; }
+    #leaderboard_charts { height: 1fr; min-height: 4; }
+    #chart, #scatter { padding: 0; }
+    #run_log { height: 1fr; }
+    """,
+    "ultra-compact": """
+    .toolbar { height: 1; padding: 0; }
+    #dashboard_actions, #leaderboard_actions { height: 1; margin: 0; }
+    .panel_title { display: none; }
+    #status_line { height: 1; padding: 0 1; }
+    DataTable > .datatable--header { padding: 0 1; }
+    #settings_panel { width: 22; padding: 0; }
+    #settings_panel Label { height: 1; }
+    #settings_panel Input, #settings_panel Select { height: 1; }
+    .switch_row { height: 1; }
+    #campaign_builder { height: 14; padding: 0; }
+    #config_status, #models_status, #results_status, #monitor_status { display: none; }
+    .monitor_pane { padding: 0; }
+    #board_table { height: 5; }
+    #leaderboard_charts { height: 1fr; min-height: 3; }
+    #chart, #scatter { padding: 0; }
+    #run_log { height: 1fr; }
+    """,
 }
 
 TIER_COLORS = {
@@ -158,6 +263,201 @@ class ActionStrip(Static):
                 event.stop()
                 return
             cursor = end
+
+
+
+class CollapsibleSection(Container):
+    """Section that can be collapsed/expanded with a clickable header."""
+
+    class Toggled(Message):
+        def __init__(self, section_id: str, collapsed: bool) -> None:
+            super().__init__()
+            self.section_id = section_id
+            self.collapsed = collapsed
+
+    collapsed = reactive(False)
+
+    DEFAULT_CSS = """
+    CollapsibleSection {
+        border: solid #303840;
+        background: #101316;
+    }
+    CollapsibleSection .section-header {
+        height: 1;
+        background: #182128;
+        color: #55ccff;
+        text-style: bold;
+        padding: 0 1;
+    }
+    CollapsibleSection .section-header:hover {
+        background: #20262c;
+    }
+    CollapsibleSection .section-content {
+        height: auto;
+        max-height: 1fr;
+        overflow: hidden;
+    }
+    CollapsibleSection.collapsed .section-header {
+        color: #8b949e;
+    }
+    CollapsibleSection.collapsed .section-content {
+        display: none;
+    }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        *children,
+        id: str | None = None,
+        initially_collapsed: bool = False,
+    ) -> None:
+        super().__init__(id=id)
+        self.title = title
+        self._children = children
+        self.collapsed = initially_collapsed
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"{'[ ]' if self.collapsed else '[*]'} {self.title}",
+            classes="section-header",
+        )
+        with Vertical(classes="section-content"):
+            for child in self._children:
+                yield child
+
+    def on_click(self, event: events.Click) -> None:
+        self.collapsed = not self.collapsed
+        self.post_message(self.Toggled(self.id or "", self.collapsed))
+
+    def watch_collapsed(self, value: bool) -> None:
+        self.set_classes("collapsed" if value else "")
+        self.query_one(".section-header", Static).update(
+            f"{'[ ]' if value else '[*]'} {self.title}"
+        )
+        self.refresh_layout()
+
+
+
+class LayoutPanel(ModalScreen[None]):
+    """Modal for density mode, section visibility, and layout persistence."""
+
+    class LayoutChanged(Message):
+        def __init__(
+            self,
+            density: str = DENSITY_DEFAULT,
+            sections: dict[str, bool] | None = None,
+            column_priorities: dict[str, int] | None = None,
+        ) -> None:
+            super().__init__()
+            self.density = density
+            self.sections = sections or {}
+            self.column_priorities = column_priorities or {}
+
+    DEFAULT_CSS = """
+    LayoutPanel {
+        align: center middle;
+        background: black;
+    }
+    LayoutPanel #layout_modal {
+        width: 70;
+        height: 24;
+        background: #12161a;
+        border: solid #55ccff;
+        padding: 1 2;
+    }
+    LayoutPanel #layout_title {
+        height: 1;
+        background: #182128;
+        color: #55ccff;
+        content-align: center middle;
+        text-style: bold;
+    }
+    LayoutPanel #layout_body {
+        height: 1fr;
+        padding: 0 1;
+    }
+    LayoutPanel #layout_footer {
+        height: 3;
+        background: #15191d;
+        content-align: center middle;
+    }
+    LayoutPanel #layout_footer Button {
+        width: 12;
+        margin: 0 1;
+    }
+    LayoutPanel Select {
+        height: 3;
+        width: 1fr;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            Static("Layout & Density Configuration", id="layout_title"),
+            Vertical(
+                Label("Density Mode"),
+                Select(
+                    DENSITY_MODES,
+                    value=DENSITY_DEFAULT,
+                    id="layout_density",
+                ),
+                Label(""),
+                Label("Section Visibility (check to show, uncheck to hide)"),
+                SelectionList(*[
+                    (f"  Dashboard", "dashboard", True),
+                    (f"  Config", "config", True),
+                    (f"  Models", "models", True),
+                    (f"  Results", "results", True),
+                    (f"  Leaderboard", "leaderboard", True),
+                    (f"  Agent Monitor", "agent_monitor", True),
+                ], id="layout_sections"),
+                Label(""),
+                Label("Column Priorities (DataTable display order, higher = more important)"),
+                SelectionList(*[
+                    (f"  Rating", "rating", True),
+                    (f"  Model", "model", True),
+                    (f"  Throughput (t/s)", "throughput", True),
+                    (f"  Quality", "quality", True),
+                    (f"  Latency (p95)", "latency", True),
+                    (f"  Context", "context", False),
+                    (f"  VRAM", "vram", False),
+                    (f"  Runs", "runs", False),
+                ], id="layout_columns"),
+                id="layout_body",
+            ),
+            Horizontal(
+                Button("Save & Apply", id="layout_apply", variant="primary"),
+                Button("Reset to Defaults", id="layout_reset"),
+                Button("Cancel", id="layout_cancel"),
+                id="layout_footer",
+            ),
+            id="layout_modal",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "layout_cancel":
+            self.dismiss(None)
+        elif event.button.id == "layout_reset":
+            self.query_one("#layout_density", Select).value = DENSITY_DEFAULT
+            self.query_one("#layout_sections", SelectionList).select_all()
+            for idx in range(5):
+                self.query_one("#layout_columns", SelectionList).select(idx)
+            for idx in range(5, 8):
+                self.query_one("#layout_columns", SelectionList).deselect(idx)
+        elif event.button.id == "layout_apply":
+            density = self.query_one("#layout_density", Select).value
+            sections = dict(self.query_one("#layout_sections", SelectionList).selected)
+            columns = dict(self.query_one("#layout_columns", SelectionList).selected)
+            self.dismiss(self.LayoutChanged(
+                density=density,
+                sections=sections,
+                column_priorities=columns,
+            ))
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class HelpScreen(ModalScreen[None]):
@@ -2098,6 +2398,8 @@ class BenchmarkTUI(App):
         Binding("r", "run_control('resume')", "Resume"),
         Binding("x", "run_control('stop')", "Stop"),
         Binding("slash", "focus_filter", "Filter"),
+        Binding("d", "cycle_density", "Density"),
+        Binding("l", "toggle_layout", "Layout"),
         Binding("1", "show_tab('dashboard')", "Dashboard"),
         Binding("2", "show_tab('config')", "Config"),
         Binding("3", "show_tab('models')", "Models"),
@@ -2105,6 +2407,8 @@ class BenchmarkTUI(App):
         Binding("5", "show_tab('leaderboard')", "Leaderboard"),
         Binding("6", "show_tab('agent_monitor')", "Agent monitor"),
     ]
+    density_mode = reactive(DENSITY_DEFAULT)
+    _layout_settings: dict[str, Any] = {}
     CSS = """
     Screen { background: #0e1013; color: #d5d9dd; }
     Header { height: 1; background: #15191d; color: #55ccff; }
@@ -2203,6 +2507,7 @@ class BenchmarkTUI(App):
         super().__init__()
         configs = list_campaign_configs()
         self.active_config = configs[0] if configs else rb.DEFAULT_CONFIG
+        self._load_layout_settings()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -2220,6 +2525,48 @@ class BenchmarkTUI(App):
             with TabPane("Agent monitor", id="agent_monitor"):
                 yield AgentMonitorPane()
         yield Footer()
+
+    def _load_layout_settings(self) -> None:
+        layout_path = CONFIG_DIR / "layout.json"
+        if layout_path.is_file():
+            try:
+                data = json.loads(layout_path.read_text(encoding="utf-8"))
+                self._layout_settings = data
+                mode = data.get("density_mode", DENSITY_DEFAULT)
+                if mode in DENSITY_CSS:
+                    self.density_mode = mode
+            except (json.JSONDecodeError, OSError):
+                self._layout_settings = {}
+
+    def _save_layout_settings(self) -> None:
+        layout_path = CONFIG_DIR / "layout.json"
+        self._layout_settings["density_mode"] = self.density_mode
+        layout_path.write_text(json.dumps(self._layout_settings, indent=2), encoding="utf-8")
+
+    def watch_density_mode(self, mode: str) -> None:
+        mode_css = DENSITY_CSS.get(mode, DENSITY_CSS["normal"])
+        self.css = self.CSS + "\n" + mode_css
+
+    def action_cycle_density(self) -> None:
+        modes = list(DENSITY_CSS.keys())
+        idx = modes.index(self.density_mode) if self.density_mode in modes else 0
+        next_mode = modes[(idx + 1) % len(modes)]
+        self.density_mode = next_mode
+        self._save_layout_settings()
+        self.notify(f"Density mode: {[m[0] for m in DENSITY_MODES if m[1] == next_mode][0]}")
+
+    def action_toggle_layout(self) -> None:
+        self.push_screen(LayoutPanel(), self._on_layout_changed)
+
+    def _on_layout_changed(self, result: LayoutPanel.LayoutChanged | None) -> None:
+        if result is None:
+            return
+        if result.density != self.density_mode:
+            self.density_mode = result.density
+        self._layout_settings["sections"] = result.sections
+        self._layout_settings["column_priorities"] = result.column_priorities
+        self._save_layout_settings()
+        self.notify(f"Layout updated (density: {[m[0] for m in DENSITY_MODES if m[1] == result.density][0]})")
 
     def action_show_tab(self, tab_id: str) -> None:
         self.query_one(TabbedContent).active = tab_id

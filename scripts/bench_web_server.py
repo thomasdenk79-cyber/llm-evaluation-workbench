@@ -233,6 +233,33 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _inject_pwa_and_serve(self) -> None:
+        """Read report HTML, inject PWA manifest/SW/install UI, then serve."""
+        html = REPORT_HTML.read_text(encoding="utf-8", errors="replace")
+        pwa_head = (
+            '\n<link rel="manifest" href="/manifest.json"> '
+            '<meta name="theme-color" content="#15191d"> '
+            '<link rel="icon" type="image/svg+xml" href="/pwa/icon-192.svg">'
+        )
+        if "</head>" in html:
+            html = html.replace("</head>", pwa_head + "\n</head>")
+        pwa_body = (
+            '\n<script>(function(){if("serviceWorker"in navigator){'
+            'window.addEventListener("load",function(){'
+            'navigator.serviceWorker.register("/sw.js",{scope:"/"'
+            '}).then(function(r){console.log("SW registered",r.scope)'
+            '})}).catch(function(){})})'
+            '();</script>'
+        )
+        if "</body>" in html:
+            html = html.replace("</body>", pwa_body + "\n</body>")
+        body = html.encode("utf-8")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_no_report_page(self) -> None:
         """Serve a friendly placeholder when no benchmark data has been generated yet."""
         html = (
@@ -335,9 +362,34 @@ class Handler(BaseHTTPRequestHandler):
             if not REPORT_HTML.exists():
                 self._send_no_report_page()
                 return
-            self._send_file(REPORT_HTML, "text/html; charset=utf-8")
+            self._inject_pwa_and_serve()
+        elif path == "/manifest.json":
+            manifest = DOCS_PROJECT / "manifest.json"
+            if manifest.is_file():
+                self._send_file(manifest, "application/json")
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND, "Manifest not found")
         elif path == "/help":
             self._send_bytes(200, HELP_HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/pwa/manifest.json":
+            manifest = DOCS_PROJECT / "manifest.json"
+            if manifest.is_file():
+                self._send_file(manifest, "application/json")
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND, "Manifest not found")
+        elif path.startswith("/pwa/icon-"):
+            rel = path[len("/pwa/"):]
+            icon = (DOCS_PROJECT / rel).resolve()
+            if DOCS_PROJECT.resolve() in icon.parents or icon == DOCS_PROJECT.resolve():
+                self._send_file(icon, "image/svg+xml")
+            else:
+                self.send_error(HTTPStatus.FORBIDDEN, "Path traversal rejected")
+        elif path == "/sw.js":
+            sw = DOCS_PROJECT / "sw.js"
+            if sw.is_file():
+                self._send_file(sw, "application/javascript; charset=utf-8")
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND, "Service Worker not found")
         elif path == "/api/settings":
             self._send_json_response(200, _load_server_settings())
         elif path == "/api/data":

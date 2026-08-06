@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="24" fill="#15191d"/>
+  <text x="96" y="80" font-family="monospace" font-size="48" font-weight="bold" fill="#55ccff" text-anchor="middle">LLM</text>
+  <text x="96" y="120" font-family="monospace" font-size="28" font-weight="bold" fill="#d5d9dd" text-anchor="middle">BENCH</text>
+  <rect x="48" y="130" width="96" height="8" rx="4" fill="#55ccff"/>
+  <rect x="48" y="144" width="64" height="8" rx="4" fill="#8b949e"/>
+  <rect x="48" y="158" width="80" height="8" rx="4" fill="#2c363f"/>
+</svg>

@@ -1,4 +1,4 @@
 psutil>=5.9
-textual>=0.60
+textual>=8.2.8
 brotli>=1.1
 zstandard>=0.22

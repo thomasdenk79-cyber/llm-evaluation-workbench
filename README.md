@@ -1,5 +1,9 @@
 # LLM Evaluation Workbench
 
+![workbench](docs/media/workbench.gif)
+
+> Status: alpha (Siemens Inner Source)\n
+
 Zentrale Sammlung und strukturierte Ausfuehrungsbasis fuer lokale LLM-Benchmarks
 (Ollama + llama.cpp) mit Fokus auf Oracle->PostgreSQL-Migration, Coding und Translation.
 
